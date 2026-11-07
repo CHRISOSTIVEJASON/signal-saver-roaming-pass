@@ -187,13 +187,13 @@ function ApkBanner() {
     else toast("The Android app will be available for download soon.");
   };
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-accent/30 bg-accent/10 p-3 text-left">
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-accent/30 bg-accent/10 p-3 text-left">
       <Download className="h-8 w-8 shrink-0 text-accent" />
       <div className="flex-1">
         <div className="text-sm font-semibold">Stay connected on the go</div>
         <div className="text-xs text-muted-foreground">Get the app to keep your pass running in the background.</div>
       </div>
-      <button onClick={download} className="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-accent-foreground hover:brightness-110">
+      <button onClick={download} className="w-full rounded-lg bg-accent px-3 py-2.5 sm:w-auto text-xs font-semibold text-accent-foreground hover:brightness-110">
         Download Android App (APK)
       </button>
     </div>
