@@ -40,7 +40,7 @@ export const initiateStkPush = createServerFn({ method: "POST" })
           callback_url: "https://example.com/payhero-callback",
         }),
       });
-      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const json = (await res.json().catch(() => ({}))) as any;
       if (!res.ok) return { ok: false as const, error: String(json.error_message ?? json.message ?? `HTTP ${res.status}`) };
       return { ok: true as const, reference: String(json.reference ?? json.CheckoutRequestID ?? "") };
     } catch (e) {
@@ -56,7 +56,7 @@ export const checkStkStatus = createServerFn({ method: "POST" })
         `https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(data.reference)}`,
         { headers: { Authorization: authHeader(data) } },
       );
-      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      const json = (await res.json().catch(() => ({}))) as any;
       const status = String(json.status ?? "QUEUED").toUpperCase();
       return { status, receipt: String(json.provider_reference ?? json.third_party_reference ?? "") };
     } catch {
