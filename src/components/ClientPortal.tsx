@@ -25,7 +25,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
 
   async function pay() {
     const msisdn = normalizePhone(phone);
-    if (!msisdn) return toast.error("Enter a valid Safaricom number (07… or 01…)");
+    if (!msisdn) { toast.error("Enter a valid Safaricom number (07… or 01…)"); return; }
     const cfg = read<PayConfig>(KEYS.config, defaultConfig);
     const live = cfg.live && cfg.channelId && (cfg.apiToken || (cfg.username && cfg.password));
     const txnId = uid();

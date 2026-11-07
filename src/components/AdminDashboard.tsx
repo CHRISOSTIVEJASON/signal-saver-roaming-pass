@@ -125,7 +125,7 @@ function PayHeroCard() {
   const set = (k: keyof PayConfig) => (v: string | boolean) => setC({ ...c, [k]: v });
   const save = () => {
     if (c.live && (!c.channelId || !(c.apiToken || (c.username && c.password))))
-      return toast.error("Live mode needs a Channel ID and either an API token or username + password");
+      { toast.error("Live mode needs a Channel ID and either an API token or username + password"); return; }
     setSaved(c); toast.success("PayHero settings saved");
   };
   return (
@@ -162,7 +162,7 @@ function PasscodeCard() {
   };
   const save = () => {
     const r = changePasscode(sec, pass);
-    if (!r.ok) return toast.error(r.error);
+    if (!r.ok) { toast.error(r.error); return; }
     write(KEYS.passcode, r.passcode);
     toast.success("Master passcode updated");
     setStep("idle"); setSec(""); setPass("");
@@ -202,8 +202,8 @@ function PoolManager() {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ ssid: "", bssid: "", venue: "" });
   const add = () => {
-    if (!f.ssid.trim() || !f.bssid.trim()) return toast.error("Wi-Fi name and BSSID are required");
-    if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(f.bssid.trim())) return toast.error("BSSID must look like AA:BB:CC:DD:EE:FF");
+    if (!f.ssid.trim() || !f.bssid.trim()) { toast.error("Wi-Fi name and BSSID are required"); return; }
+    if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(f.bssid.trim())) { toast.error("BSSID must look like AA:BB:CC:DD:EE:FF"); return; }
     setNetworks((p) => [{ id: uid(), ssid: f.ssid.trim(), bssid: f.bssid.trim().toUpperCase().replace(/-/g, ":"), venue: f.venue.trim(), addedAt: Date.now() }, ...p]);
     setF({ ssid: "", bssid: "", venue: "" }); setOpen(false); toast.success("Wi-Fi stamped into the pool");
   };

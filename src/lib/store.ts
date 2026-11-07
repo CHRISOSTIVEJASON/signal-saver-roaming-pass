@@ -104,7 +104,7 @@ export function recordRelayTick(phone: string) {
   const ev: RelayEvent = {
     id: uid(), at: Date.now(), from: phone, kb, kind,
     peer: "Peer-" + Math.random().toString(16).slice(2, 6).toUpperCase(),
-    via: nets.length ? nets[Math.floor(Math.random() * nets.length)].ssid : "Direct",
+    via: nets.length ? (nets[Math.floor(Math.random() * nets.length)]?.ssid ?? "Direct") : "Direct",
   };
   write(KEYS.relay, {
     assistedKb: log.assistedKb + (kind === "assist" ? kb : 0),
