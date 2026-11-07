@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Trash2, Users, Wallet, Wifi, Database, X } from "lucide-react";
 import { toast } from "sonner";
 import { changePasscode, formatClock, getPass, tick } from "@/lib/rules";
-import { KEYS, defaultConfig, uid, useStored, write, type Network, type PayConfig, type Session, type Txn } from "@/lib/store";
+import { KEYS, defaultConfig, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
@@ -49,6 +49,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
             s.online ? <Pill tone="primary">Active</Pill> : <Pill tone="warning">Frozen</Pill>,
           ])} />
       </Panel>
+      <RelayMonitor />
       <Panel title="M-Pesa Transactions Log" icon={<Wallet className="h-4 w-4" />}>
         <Table head={["Time", "Phone", "Amount", "Reference", "Mode", "Status"]} empty="No transactions yet."
           rows={txns.map((t) => [
@@ -226,6 +227,27 @@ function PoolManager() {
           </div>
         </div>
       )}
+    </Panel>
+  );
+}
+
+function RelayMonitor() {
+  const [log] = useStored<RelayLog>(KEYS.relay, emptyRelay);
+  const peers = new Set(log.events.map((e) => e.peer)).size;
+  return (
+    <Panel title="Mesh Swarm & Relay Activity" icon={<Radio className="h-4 w-4" />}
+      action={<span className="text-[10px] uppercase tracking-wider text-muted-foreground">Simulated</span>}>
+      <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-lg bg-background p-2"><div className="font-mono font-bold">{(log.assistedKb / 1024).toFixed(1)} MB</div><div className="text-[11px] text-muted-foreground">Peer-assist sent</div></div>
+        <div className="rounded-lg bg-background p-2"><div className="font-mono font-bold">{(log.receivedKb / 1024).toFixed(1)} MB</div><div className="text-[11px] text-muted-foreground">Reciprocal received</div></div>
+        <div className="rounded-lg bg-background p-2"><div className="font-mono font-bold">{peers}</div><div className="text-[11px] text-muted-foreground">Peers seen</div></div>
+      </div>
+      <Table head={["Time", "Node", "Direction", "Peer", "Via", "Data"]} empty="No relay activity yet — starts automatically when a pass is online."
+        rows={log.events.slice(0, 25).map((e) => [
+          new Date(e.at).toLocaleTimeString(), `+${e.from}`,
+          e.kind === "assist" ? <Pill tone="primary">→ Assist</Pill> : <Pill tone="warning">← Received</Pill>,
+          <span className="font-mono text-xs">{e.peer}</span>, e.via, `${e.kb} KB`,
+        ])} />
     </Panel>
   );
 }

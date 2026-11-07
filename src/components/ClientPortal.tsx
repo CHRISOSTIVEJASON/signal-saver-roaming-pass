@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Loader2, Wifi, WifiOff, Zap, Pause, Smartphone } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, formatClock, getPass, normalizePhone, tick } from "@/lib/rules";
-import { KEYS, defaultConfig, read, uid, useStored, type PayConfig, type Session, type Txn } from "@/lib/store";
+import { KEYS, defaultConfig, read, recordRelayTick, uid, useStored, type PayConfig, type Session, type Txn } from "@/lib/store";
 import { checkStkStatus, initiateStkPush } from "@/lib/payhero.functions";
 
 export function ClientPortal() {
@@ -120,6 +120,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     const step = () => {
       const now = Date.now();
       update((s) => ({ remainingMs: tick(s.remainingMs, s.lastTick, now, s.online), lastTick: now }));
+      if (ref.current.online) recordRelayTick(ref.current.phone);
       force((n) => n + 1);
     };
     step();

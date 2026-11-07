@@ -38,6 +38,7 @@ export const KEYS = {
   sessions: "gn_sessions",
   txns: "gn_txns",
   active: "gn_active_session",
+  relay: "gn_relay",
 };
 
 export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "" };
@@ -88,3 +89,26 @@ export function useStored<T>(key: string, fallback: T) {
 
 export const getPasscode = () => read(KEYS.passcode, DEFAULT_PASSCODE);
 export const uid = () => Math.random().toString(36).slice(2, 10).toUpperCase();
+
+export type RelayEvent = { id: string; at: number; from: string; peer: string; via: string; kb: number; kind: "assist" | "received" };
+export type RelayLog = { assistedKb: number; receivedKb: number; events: RelayEvent[] };
+export const emptyRelay: RelayLog = { assistedKb: 0, receivedKb: 0, events: [] };
+
+/** Simulated background peer-assist: called once per second while a pass is online. */
+export function recordRelayTick(phone: string) {
+  if (Math.random() > 0.35) return;
+  const log = read<RelayLog>(KEYS.relay, emptyRelay);
+  const nets = read<Network[]>(KEYS.networks, []);
+  const kind: RelayEvent["kind"] = Math.random() < 0.6 ? "assist" : "received";
+  const kb = Math.round(40 + Math.random() * 900);
+  const ev: RelayEvent = {
+    id: uid(), at: Date.now(), from: phone, kb, kind,
+    peer: "Peer-" + Math.random().toString(16).slice(2, 6).toUpperCase(),
+    via: nets.length ? nets[Math.floor(Math.random() * nets.length)].ssid : "Direct",
+  };
+  write(KEYS.relay, {
+    assistedKb: log.assistedKb + (kind === "assist" ? kb : 0),
+    receivedKb: log.receivedKb + (kind === "received" ? kb : 0),
+    events: [ev, ...log.events].slice(0, 200),
+  });
+}
