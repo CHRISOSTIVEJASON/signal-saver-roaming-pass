@@ -334,6 +334,70 @@ function PayHeroCard() {
   );
 }
 
+function PasscodeCard() {
+  const [securityCode, setSecurityCode] = useState("");
+  const [newPasscode, setNewPasscode] = useState("");
+  const [saving, setSaving] = useState(false);
+  const savePasscodeCloud = useServerFn(updateMasterPasscode);
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!securityCode.trim()) {
+      toast.error("Please enter master security code (2006)");
+      return;
+    }
+    const check = changePasscode(securityCode.trim(), newPasscode.trim());
+    if (!check.ok) {
+      toast.error(check.error || "Invalid passcode");
+      return;
+    }
+    setSaving(true);
+    try {
+      await savePasscodeCloud({ data: { currentSecurityCode: securityCode.trim(), newPasscode: newPasscode.trim() } });
+      write(KEYS.passcode, newPasscode.trim());
+      toast.success("Admin passcode updated successfully!");
+      setSecurityCode("");
+      setNewPasscode("");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to update admin passcode");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel title="Admin Master Passcode" icon={<KeyRound className="h-4 w-4" />}>
+      <form onSubmit={handleUpdate} className="space-y-3">
+        <Field label="Master Security Code (Default: 2006)">
+          <input
+            type="password"
+            className={inputCls}
+            placeholder="Enter security code 2006"
+            value={securityCode}
+            onChange={(e) => setSecurityCode(e.target.value)}
+          />
+        </Field>
+        <Field label="New Admin Passcode (4-8 digits)">
+          <input
+            type="password"
+            className={inputCls + " font-mono"}
+            placeholder="e.g. 2006"
+            value={newPasscode}
+            onChange={(e) => setNewPasscode(e.target.value)}
+          />
+        </Field>
+        <Button
+          type="submit"
+          disabled={saving || !newPasscode}
+          className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110"
+        >
+          {saving ? "Updating Passcode…" : "Update Admin Passcode"}
+        </Button>
+      </form>
+    </Panel>
+  );
+}
+
 function AppSettingsCard() {
   const [saved, setSaved] = useConfig();
   const [c, setC] = useState(saved);
