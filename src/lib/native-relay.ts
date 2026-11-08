@@ -7,5 +7,6 @@ export const GlobalRelay = registerPlugin<{
   getState(): Promise<NativeState>;
   start(options:{active:boolean;upstreamInPool:boolean}):Promise<void>;
   stop():Promise<void>;
+  submitCaptivePortal(options: { bssid: string; loginUrl: string; fields: Record<string, string> }): Promise<{ validated: boolean }>;
   addListener(event:'stateChanged', callback:(state:NativeState)=>void):Promise<PluginListenerHandle>;
 }>('GlobalRelay');

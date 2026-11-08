@@ -18,7 +18,7 @@ export function NativeBridge() {
     const update = (state: NativeState) => {
       if(disposed)return;
       const previous=read<Device>(KEYS.device,defaultDevice);
-      write(KEYS.device,{...previous,appMode:true,perms:{background:state.granted?'granted':'denied',wifi:state.granted?'granted':'denied',relay:state.granted?'granted':'denied'},currentWifi:state.ssid && state.bssid ? {ssid:state.ssid,bssid:state.bssid}:null,relay:state.relay??null});
+      write(KEYS.device,{...previous,appMode:true,captive:previous.currentWifi?.bssid===state.bssid?previous.captive:null,perms:{background:state.granted?'granted':'denied',wifi:state.granted?'granted':'denied',relay:state.granted?'granted':'denied'},currentWifi:state.ssid && state.bssid ? {ssid:state.ssid,bssid:state.bssid}:null,relay:state.relay??null});
       if(state.relay && Date.now()-lastMeshSync>9000) { lastMeshSync=Date.now(); void saveShared(KEYS.mesh,[state.relay]).catch(()=>{}); }
     };
     const listener=GlobalRelay.addListener('stateChanged',update);

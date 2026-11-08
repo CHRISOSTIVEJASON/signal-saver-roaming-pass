@@ -4,6 +4,8 @@ import { toast } from "sonner";
 import { APP_VERSION, changePasscode, formatClock, getPass, tick } from "@/lib/rules";
 import { Button } from "./ui/button";
 import type { MeshLink } from "@/lib/relay";
+import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
+import { saveShared } from '@/lib/cloud-cache';
 import { useConfig, useDevice } from "@/components/Gates";
 import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn } from "@/lib/store";
 
@@ -246,12 +248,18 @@ function PoolManager() {
   const [networks, setNetworks] = useStored<Network[]>(KEYS.networks, []);
   const [device] = useDevice();
   const [venue, setVenue] = useState("");
+  const [editing, setEditing] = useState<Network | null>(null);
+  const [stamping, setStamping] = useState(false);
   const cur = device.currentWifi;
-  const stamp = () => {
+  const stamp = async () => {
     if (!cur) { toast.error("This phone isn't connected to any Wi-Fi right now"); return; }
     if (networks.some((n) => n.bssid.toUpperCase() === cur.bssid.toUpperCase())) { toast("This network is already in the pool"); return; }
-    setNetworks((p) => [{ id: uid(), ssid: cur.ssid, bssid: cur.bssid.toUpperCase(), venue: venue.trim(), addedAt: Date.now() }, ...p]);
-    setVenue(""); toast.success(`${cur.ssid} stamped into the pool`);
+    const network = { id: uid(), ssid: cur.ssid, bssid: cur.bssid.toUpperCase(), venue: venue.trim(), addedAt: Date.now() };
+    setStamping(true);
+    try {
+      await saveShared(KEYS.networks, [network, ...networks]);
+      setVenue(""); toast.success(`${cur.ssid} stamped into the pool`); setEditing(network);
+    } catch { toast.error('Unable to stamp network'); } finally { setStamping(false); }
   };
   return (
     <Panel title="Wi-Fi Master Pool" icon={<Wifi className="h-4 w-4" />}>
@@ -259,7 +267,7 @@ function PoolManager() {
         <div className="text-xs text-muted-foreground">Currently connected</div>
         <div className="font-medium">{cur ? <>{cur.ssid} <span className="font-mono text-xs text-muted-foreground">{cur.bssid}</span></> : "Not connected to Wi-Fi"}</div>
         <input className={inputCls} placeholder="Venue label (optional), e.g. Westlands Mall" value={venue} onChange={(e) => setVenue(e.target.value)} />
-        <Button onClick={stamp} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
+        <Button onClick={stamp} disabled={stamping} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
           <Plus className="h-4 w-4" />Stamp Current Network
         </Button>
       </div>
@@ -271,12 +279,14 @@ function PoolManager() {
                 <div className="truncate text-sm font-medium">{n.ssid}</div>
                 <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
               </div>
+              <Button variant="outline" size="icon" title="Edit network login" aria-label={`Edit network login for ${n.ssid}`} onClick={() => setEditing(n)}><KeyRound className="h-4 w-4" /></Button>
               <Button onClick={() => { setNetworks((p) => p.filter((x) => x.id !== n.id)); toast("Removed from pool"); }}
                 className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive px-2 py-1.5 text-xs font-medium text-destructive-foreground"><Trash2 className="h-3 w-3" />Remove from Pool</Button>
             </li>
           ))}
         </ul>
       )}
+      {editing && <CaptiveCredentialsDialog network={editing} onClose={() => setEditing(null)} />}
     </Panel>
   );
 }
