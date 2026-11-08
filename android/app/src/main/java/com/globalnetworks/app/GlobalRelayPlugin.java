@@ -8,7 +8,9 @@ import android.content.IntentFilter;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.Uri;
+import android.net.VpnService;
 import android.net.wifi.WifiManager;
 import android.net.wifi.aware.PublishDiscoverySession;
 import android.net.wifi.aware.WifiAwareSession;
@@ -50,6 +52,7 @@ public class GlobalRelayPlugin extends Plugin {
     private WifiAwareSession awareSession;
     private PublishDiscoverySession publication;
     private BroadcastReceiver receiver;
+    private ConnectivityManager.NetworkCallback autoRelayCallback;
     private boolean started = false;
     private boolean upstream = false;
     private JSObject relay;
@@ -76,6 +79,43 @@ public class GlobalRelayPlugin extends Plugin {
         } else {
             getContext().registerReceiver(receiver, filter);
         }
+
+        registerAutoRelayCallback();
+    }
+
+    private void registerAutoRelayCallback() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && Build.VERSION.SDK_INT >= 24) {
+                NetworkRequest req = new NetworkRequest.Builder()
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                        .build();
+                autoRelayCallback = new ConnectivityManager.NetworkCallback() {
+                    @Override
+                    public void onAvailable(Network network) {
+                        autoStartRelayHost();
+                    }
+
+                    @Override
+                    public void onLost(Network network) {
+                        // Keep service resilient
+                    }
+                };
+                cm.registerNetworkCallback(req, autoRelayCallback);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void autoStartRelayHost() {
+        try {
+            Intent serviceIntent = new Intent(getContext(), RelayService.class);
+            serviceIntent.setAction(RelayService.ACTION_START_HOST);
+            if (Build.VERSION.SDK_INT >= 26) {
+                getContext().startForegroundService(serviceIntent);
+            } else {
+                getContext().startService(serviceIntent);
+            }
+        } catch (Exception ignored) {}
     }
 
     private boolean granted() {
@@ -105,6 +145,25 @@ public class GlobalRelayPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void checkMandatoryPermission(PluginCall call) {
+        JSObject result = new JSObject();
+        boolean hasAccess = granted();
+        Intent vpnIntent = VpnService.prepare(getContext());
+        boolean vpnPrepared = (vpnIntent == null);
+
+        result.put("granted", hasAccess);
+        result.put("vpnPrepared", vpnPrepared);
+        result.put("ready", hasAccess && vpnPrepared);
+
+        if (!vpnPrepared && getActivity() != null) {
+            try {
+                getActivity().startActivityForResult(vpnIntent, 101);
+            } catch (Exception ignored) {}
+        }
+        call.resolve(result);
+    }
+
+    @PluginMethod
     public void openSettings(PluginCall call) {
         getActivity().startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getContext().getPackageName())));
         call.resolve();
@@ -125,7 +184,7 @@ public class GlobalRelayPlugin extends Plugin {
                 android.net.wifi.WifiInfo info = wifi.getConnectionInfo();
                 String ssid = info.getSSID();
                 if (ssid != null && !ssid.equals("<unknown ssid>")) {
-                    result.put("ssid", ssid.replace("\"", ""));
+                    result.put("ssid", ssid.replace(""", ""));
                     result.put("bssid", info.getBSSID());
                 }
             }
@@ -169,13 +228,7 @@ public class GlobalRelayPlugin extends Plugin {
         }
         started = true;
 
-        Intent serviceIntent = new Intent(getContext(), RelayService.class);
-        serviceIntent.setAction(RelayService.ACTION_START_HOST);
-        if (Build.VERSION.SDK_INT >= 26) {
-            getContext().startForegroundService(serviceIntent);
-        } else {
-            getContext().startService(serviceIntent);
-        }
+        autoStartRelayHost();
 
         Map<String, String> record = new HashMap<>();
         record.put("identity", networkName);
@@ -196,6 +249,37 @@ public class GlobalRelayPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void startClientAutoRouter(PluginCall call) {
+        String host = call.getString("hostIp", "192.168.49.1");
+        int port = call.getInt("hostPort", 8282);
+
+        Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
+        vpnIntent.setAction(RelayVpnService.ACTION_START_CLIENT);
+        vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_IP, host);
+        vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_PORT, port);
+
+        if (Build.VERSION.SDK_INT >= 26) {
+            getContext().startForegroundService(vpnIntent);
+        } else {
+            getContext().startService(vpnIntent);
+        }
+
+        JSObject res = new JSObject();
+        res.put("active", true);
+        res.put("hostIp", host);
+        res.put("hostPort", port);
+        call.resolve(res);
+    }
+
+    @PluginMethod
+    public void stopClientAutoRouter(PluginCall call) {
+        Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
+        vpnIntent.setAction(RelayVpnService.ACTION_STOP_CLIENT);
+        getContext().startService(vpnIntent);
+        call.resolve();
+    }
+
+    @PluginMethod
     public void stop(PluginCall call) {
         started = false;
         if (manager != null && channel != null) {
@@ -206,6 +290,8 @@ public class GlobalRelayPlugin extends Plugin {
         Intent serviceIntent = new Intent(getContext(), RelayService.class);
         serviceIntent.setAction(RelayService.ACTION_STOP);
         getContext().startService(serviceIntent);
+
+        stopClientAutoRouter(call);
 
         relay = null;
         emit();
@@ -224,7 +310,8 @@ public class GlobalRelayPlugin extends Plugin {
                 relay = new JSObject();
                 relay.put("connected", true);
                 relay.put("isGroupOwner", info.isGroupOwner);
-                relay.put("groupOwnerAddress", info.groupOwnerAddress != null ? info.groupOwnerAddress.getHostAddress() : "");
+                String ownerIp = info.groupOwnerAddress != null ? info.groupOwnerAddress.getHostAddress() : "";
+                relay.put("groupOwnerAddress", ownerIp);
                 relay.put("transportReady", RelayService.isRouterRunning() || info.groupFormed);
                 relay.put("transportType", "wifi_direct_bridge");
                 relay.put("peerCount", group != null ? group.getClientList().size() : 0);
@@ -235,9 +322,30 @@ public class GlobalRelayPlugin extends Plugin {
                     relay.put("networkName", group.getNetworkName());
                     relay.put("passphrase", group.getPassphrase());
                 }
+
+                if (!info.isGroupOwner && ownerIp != null && !ownerIp.isEmpty()) {
+                    autoEngageClientRouter(ownerIp, RelayService.RELAY_PORT);
+                }
+
                 emit();
             });
         });
+    }
+
+    private void autoEngageClientRouter(String hostIp, int port) {
+        try {
+            if (!RelayVpnService.isVpnRunning() && VpnService.prepare(getContext()) == null) {
+                Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
+                vpnIntent.setAction(RelayVpnService.ACTION_START_CLIENT);
+                vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_IP, hostIp);
+                vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_PORT, port);
+                if (Build.VERSION.SDK_INT >= 26) {
+                    getContext().startForegroundService(vpnIntent);
+                } else {
+                    getContext().startService(vpnIntent);
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     @PluginMethod
