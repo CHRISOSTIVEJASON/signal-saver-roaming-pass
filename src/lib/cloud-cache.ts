@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 
 const shared = new Set(["gn_networks", "gn_sessions", "gn_txns", "gn_payhero", "gn_mesh_links"]);
 const values = new Map<string, unknown>();
+const emptyList: unknown[] = [];
+const defaults = new Map<string, unknown>();
 const listeners = new Set<() => void>();
 let saver: ((key: string, value: unknown) => Promise<void>) | undefined;
 export const isSharedKey = (key: string) => shared.has(key);
@@ -19,5 +21,7 @@ export async function saveShared(key: string, value: unknown) {
   await saver(key, value);
 }
 export function useCached<T>(key: string, fallback: T) {
-  return useSyncExternalStore((listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => cached(key, fallback), () => fallback);
+  if (!defaults.has(key)) defaults.set(key, Array.isArray(fallback) ? emptyList : fallback);
+  const stableFallback = defaults.get(key) as T;
+  return useSyncExternalStore((listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => cached(key, stableFallback), () => stableFallback);
 }
