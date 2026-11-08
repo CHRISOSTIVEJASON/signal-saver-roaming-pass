@@ -1,14 +1,26 @@
 package com.globalnetworks.app;
 
-import android.app.*;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.Network;
-import android.os.*;
-import java.io.*;
-import java.net.*;
-import java.util.concurrent.*;
+import android.os.Build;
+import android.os.IBinder;
+
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -145,172 +157,150 @@ public class RelayService extends Service {
             String line;
             while ((line = reader.readLine()) != null && !line.isEmpty()) {}
 
-            Socket remote = createUpstreamSocket(host, port);
-            OutputStream clientOut = client.getOutputStream();
-            clientOut.write("HTTP/1.1 200 Connection Established
+            Socket upstreamSocket = createUpstreamSocket();
+            upstreamSocket.connect(new InetSocketAddress(host, port), 10000);
+            upstreamSocket.setTcpNoDelay(true);
 
-".getBytes());
+            OutputStream clientOut = client.getOutputStream();
+            clientOut.write("HTTP/1.1 200 Connection Established\r\n\r\n".getBytes());
             clientOut.flush();
 
-            pipeSockets(client, remote);
+            bridgeSockets(client, upstreamSocket);
         } else {
-            URL url;
+            java.net.URL url;
             if (target.startsWith("http://") || target.startsWith("https://")) {
-                url = new URL(target);
+                url = new java.net.URL(target);
             } else {
-                url = new URL("http://" + target);
+                url = new java.net.URL("http://" + target);
             }
             host = url.getHost();
             port = url.getPort() != -1 ? url.getPort() : 80;
 
-            Socket remote = createUpstreamSocket(host, port);
-            OutputStream remoteOut = remote.getOutputStream();
+            Socket upstreamSocket = createUpstreamSocket();
+            upstreamSocket.connect(new InetSocketAddress(host, port), 10000);
+            upstreamSocket.setTcpNoDelay(true);
 
+            OutputStream remoteOut = upstreamSocket.getOutputStream();
             String rewrittenPath = url.getFile();
             if (rewrittenPath == null || rewrittenPath.isEmpty()) rewrittenPath = "/";
-            String newRequestLine = method + " " + rewrittenPath + " " + (parts.length > 2 ? parts[2] : "HTTP/1.1") + "
-";
+            String newRequestLine = method + " " + rewrittenPath + " " + (parts.length > 2 ? parts[2] : "HTTP/1.1") + "\r\n";
             remoteOut.write(newRequestLine.getBytes());
 
             String line;
             while ((line = reader.readLine()) != null && !line.isEmpty()) {
                 if (!line.toLowerCase().startsWith("proxy-connection:")) {
-                    remoteOut.write((line + "
-").getBytes());
+                    remoteOut.write((line + "\r\n").getBytes());
                 }
             }
-            remoteOut.write("
-".getBytes());
+            remoteOut.write("\r\n".getBytes());
             remoteOut.flush();
 
-            pipeSockets(client, remote);
+            bridgeSockets(client, upstreamSocket);
         }
     }
 
     private void handleSocks5(Socket client, InputStream in) throws Exception {
-        DataInputStream dis = new DataInputStream(in);
         OutputStream out = client.getOutputStream();
-
-        int nmethods = dis.readByte() & 0xFF;
+        int version = in.read();
+        if (version != 5) {
+            client.close();
+            return;
+        }
+        int nmethods = in.read();
         byte[] methods = new byte[nmethods];
-        dis.readFully(methods);
+        in.read(methods);
 
         out.write(new byte[]{0x05, 0x00});
         out.flush();
 
-        int ver = dis.readByte() & 0xFF;
-        int cmd = dis.readByte() & 0xFF;
-        int rsv = dis.readByte();
-        int atyp = dis.readByte() & 0xFF;
+        byte[] header = new byte[4];
+        in.read(header);
+        int cmd = header[1];
+        int atyp = header[3];
 
-        String host = null;
+        String targetHost;
         if (atyp == 0x01) {
-            byte[] ip = new byte[4];
-            dis.readFully(ip);
-            host = InetAddress.getByAddress(ip).getHostAddress();
+            byte[] ipv4 = new byte[4];
+            in.read(ipv4);
+            targetHost = java.net.InetAddress.getByAddress(ipv4).getHostAddress();
         } else if (atyp == 0x03) {
-            int len = dis.readByte() & 0xFF;
-            byte[] domainBytes = new byte[len];
-            dis.readFully(domainBytes);
-            host = new String(domainBytes);
+            int domainLen = in.read();
+            byte[] domain = new byte[domainLen];
+            in.read(domain);
+            targetHost = new String(domain);
+        } else if (atyp == 0x04) {
+            byte[] ipv6 = new byte[16];
+            in.read(ipv6);
+            targetHost = java.net.InetAddress.getByAddress(ipv6).getHostAddress();
         } else {
             client.close();
             return;
         }
-        int port = dis.readUnsignedShort();
 
-        if (cmd != 0x01 || host == null) {
-            out.write(new byte[]{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0});
+        byte[] portBytes = new byte[2];
+        in.read(portBytes);
+        int targetPort = ((portBytes[0] & 0xFF) << 8) | (portBytes[1] & 0xFF);
+
+        if (cmd == 0x01) {
+            try {
+                Socket upstreamSocket = createUpstreamSocket();
+                upstreamSocket.connect(new InetSocketAddress(targetHost, targetPort), 10000);
+                upstreamSocket.setTcpNoDelay(true);
+
+                byte[] resp = new byte[]{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+                out.write(resp);
+                out.flush();
+
+                bridgeSockets(client, upstreamSocket);
+            } catch (Exception e) {
+                out.write(new byte[]{0x05, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+                out.flush();
+                client.close();
+            }
+        } else {
+            out.write(new byte[]{0x05, 0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
             out.flush();
             client.close();
-            return;
         }
-
-        Socket remote;
-        try {
-            remote = createUpstreamSocket(host, port);
-        } catch (Exception e) {
-            out.write(new byte[]{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0});
-            out.flush();
-            client.close();
-            return;
-        }
-
-        out.write(new byte[]{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0});
-        out.flush();
-
-        pipeSockets(client, remote);
     }
 
-    private Socket createUpstreamSocket(String host, int port) throws IOException {
+    private Socket createUpstreamSocket() {
         Socket socket = new Socket();
-        socket.setTcpNoDelay(true);
-        socket.setKeepAlive(true);
-
-        if (Build.VERSION.SDK_INT >= 23) {
-            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            if (cm != null) {
-                Network activeNetwork = cm.getActiveNetwork();
-                if (activeNetwork != null) {
-                    try {
-                        activeNetwork.bindSocket(socket);
-                    } catch (Exception ignored) {}
+        try {
+            if (Build.VERSION.SDK_INT >= 23) {
+                ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                if (cm != null) {
+                    Network net = cm.getActiveNetwork();
+                    if (net != null) {
+                        net.bindSocket(socket);
+                    }
                 }
             }
-        }
-
-        socket.connect(new InetSocketAddress(host, port), 10000);
+        } catch (Exception ignored) {}
         return socket;
     }
 
-    private void pipeSockets(Socket a, Socket b) {
-        CountDownLatch latch = new CountDownLatch(2);
+    private void bridgeSockets(Socket s1, Socket s2) {
+        threadPool.execute(() -> pipe(s1, s2, totalSentBytes));
+        threadPool.execute(() -> pipe(s2, s1, totalReceivedBytes));
+    }
 
-        threadPool.execute(() -> {
-            try {
-                InputStream in = a.getInputStream();
-                OutputStream out = b.getOutputStream();
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) != -1) {
-                    out.write(buf, 0, n);
-                    out.flush();
-                    totalReceivedBytes.addAndGet(n);
-                }
-            } catch (Exception ignored) {
-            } finally {
-                try { b.shutdownOutput(); } catch (Exception ignored) {}
-                latch.countDown();
+    private void pipe(Socket inSock, Socket outSock, AtomicLong counter) {
+        try {
+            InputStream in = inSock.getInputStream();
+            OutputStream out = outSock.getOutputStream();
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n);
+                out.flush();
+                counter.addAndGet(n);
             }
-        });
-
-        threadPool.execute(() -> {
-            try {
-                InputStream in = b.getInputStream();
-                OutputStream out = a.getOutputStream();
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) != -1) {
-                    out.write(buf, 0, n);
-                    out.flush();
-                    totalSentBytes.addAndGet(n);
-                }
-            } catch (Exception ignored) {
-            } finally {
-                try { a.shutdownOutput(); } catch (Exception ignored) {}
-                latch.countDown();
-            }
-        });
-
-        threadPool.execute(() -> {
-            try {
-                latch.await(2, TimeUnit.HOURS);
-            } catch (Exception ignored) {
-            } finally {
-                try { a.close(); } catch (Exception ignored) {}
-                try { b.close(); } catch (Exception ignored) {}
-            }
-        });
+        } catch (Exception ignored) {
+        } finally {
+            try { inSock.close(); } catch (Exception ignored) {}
+            try { outSock.close(); } catch (Exception ignored) {}
+        }
     }
 
     private synchronized void stopRouter() {
