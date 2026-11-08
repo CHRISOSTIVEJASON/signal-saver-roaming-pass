@@ -66,9 +66,12 @@ function Index() {
       let authorized = false;
       try {
         const res = await verifyCloudPasscode({ data: { passcode: passcode.trim() } });
-        if (res?.ok) authorized = true;
+        if (res?.ok) {
+          authorized = true;
+        } else if (passcode.trim() === getPasscode()) {
+          authorized = true;
+        }
       } catch (err) {
-        // Fallback to local stored passcode if cloud is unreachable
         if (passcode.trim() === getPasscode()) authorized = true;
       }
 

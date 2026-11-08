@@ -1,4 +1,6 @@
-import { getAdminPaymentConfig, savePaymentConfig, updateMasterPasscode } from "@/lib/cloud.functions";
+import { getAdminPaymentConfig, savePaymentConfig, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks } from "@/lib/cloud.functions";
+import { Capacitor } from "@capacitor/core";
+import { GlobalRelay } from "@/lib/native-relay";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type ReactNode } from "react";
 import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X } from "lucide-react";
@@ -276,14 +278,13 @@ function PasscodeCard() {
     if (!r.ok) { toast.error(r.error); return; }
     setSaving(true);
     try {
+      await saveCloudPasscode({ data: { currentSecurityCode: sec, newPasscode: r.passcode } });
       write(KEYS.passcode, r.passcode);
-      try {
-        await saveCloudPasscode({ data: { currentSecurityCode: sec, newPasscode: r.passcode } });
-      } catch (err) {
-        console.warn("Cloud passcode sync warning:", err);
-      }
       toast.success("Master passcode updated globally across all apps");
       setStep("idle"); setSec(""); setPass("");
+    } catch (err: any) {
+      console.error("Cloud passcode sync warning:", err);
+      toast.error(err?.message || "Failed to update master passcode in cloud");
     } finally {
       setSaving(false);
     }
@@ -372,7 +373,33 @@ function PoolManager() {
   const [editing, setEditing] = useState<Network | null>(null);
   const [pendingCaptiveNetwork, setPendingCaptiveNetwork] = useState<Network | null>(null);
   const [stamping, setStamping] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const deleteNetwork = useServerFn(removeCloudNetwork);
+  const pushNetworks = useServerFn(syncCloudNetworks);
   const cur = device.currentWifi;
+
+  const refreshWifi = async () => {
+    setDetecting(true);
+    try {
+      if (Capacitor.isNativePlatform()) {
+        const state = await GlobalRelay.getState();
+        if (state.ssid && state.bssid) {
+          const previous = read<Device>(KEYS.device, defaultDevice);
+          write(KEYS.device, {
+            ...previous,
+            currentWifi: { ssid: state.ssid, bssid: state.bssid }
+          });
+          toast.success(`Detected Wi-Fi: ${state.ssid} (${state.bssid})`);
+        } else {
+          toast.info("Turn on phone Location (GPS) and connect to Wi-Fi to auto-detect router MAC");
+        }
+      } else {
+        toast.info("Wi-Fi hardware auto-detection runs on Android");
+      }
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const stamp = async () => {
     const rawSsid = (cur?.ssid || manualSsid).trim();
@@ -391,8 +418,12 @@ function PoolManager() {
 
     const network: Network = { id: uid(), ssid: rawSsid, bssid: rawBssid, venue: venue.trim(), addedAt: Date.now() };
 
-    // If captive is checked, do NOT save yet — open the credentials dialogue box first
+    // If captive is checked, register network into pool first so credentials foreign keys succeed
     if (isCaptive) {
+      const nextNetworks = [network, ...networks];
+      setNetworks(nextNetworks);
+      void saveShared(KEYS.networks, nextNetworks).catch(() => {});
+      void pushNetworks({ data: { networks: [network] } }).catch(() => {});
       setPendingCaptiveNetwork(network);
       return;
     }
@@ -418,13 +449,21 @@ function PoolManager() {
   return (
     <Panel title="Wi-Fi Master Pool" icon={<Wifi className="h-4 w-4" />}>
       <div className="mb-4 space-y-2.5 rounded-lg border border-primary/30 bg-primary/5 p-3">
-        <div className="text-xs text-muted-foreground">Currently connected</div>
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-muted-foreground">Connected Wi-Fi (Hardware Router BSSID)</div>
+          <Button variant="ghost" size="sm" onClick={refreshWifi} disabled={detecting} className="h-6 text-[11px] px-2 text-primary hover:bg-primary/10">
+            {detecting ? "Detecting..." : "Detect Wi-Fi"}
+          </Button>
+        </div>
         <div className="font-medium">
           {cur ? (
-            <>{cur.ssid} <span className="font-mono text-xs text-muted-foreground">{cur.bssid}</span></>
+            <div className="space-y-1">
+              <div className="text-sm font-semibold text-foreground">{cur.ssid}</div>
+              <div className="font-mono text-xs text-muted-foreground">Router MAC / BSSID: <span className="text-primary font-bold">{cur.bssid}</span></div>
+            </div>
           ) : (
             <div className="space-y-1.5">
-              <span className="text-warning text-xs">Wi-Fi auto-detect waiting or restricted:</span>
+              <span className="text-warning text-xs">Turn on Location (GPS) & connect to Wi-Fi to auto-detect:</span>
               <input
                 className={inputCls}
                 placeholder="Type Wi-Fi name (SSID) to stamp, e.g. Safaricom_Hotspot"
@@ -433,7 +472,7 @@ function PoolManager() {
               />
               <input
                 className={inputCls + " font-mono text-xs"}
-                placeholder="Wi-Fi BSSID (optional, e.g. 00:1A:2B:3C:4D:5E)"
+                placeholder="Router hardware BSSID (MAC, e.g. 00:1A:2B:3C:4D:5E)"
                 value={manualBssid}
                 onChange={(e) => setManualBssid(e.target.value)}
               />
@@ -473,8 +512,7 @@ function PoolManager() {
                 setNetworks(next);
                 void saveShared(KEYS.networks, next).catch(() => {});
                 try {
-                  const { supabase } = await import('@/integrations/supabase/client');
-                  await supabase.from('gn_networks').delete().eq('id', n.id);
+                  await deleteNetwork({ data: { id: n.id } });
                 } catch {}
                 toast("Removed from pool");
               }}

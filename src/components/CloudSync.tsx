@@ -3,30 +3,41 @@ import { useServerFn } from '@tanstack/react-start';
 import { supabase } from '@/integrations/supabase/client';
 import { publishCache, clearPrivateCache, registerCloudSaver } from '@/lib/cloud-cache';
 import { defaultConfig, KEYS, read, type Session, type Txn, type Network, type PayConfig } from '@/lib/store';
-import { savePaymentConfig } from '@/lib/cloud.functions';
+import { savePaymentConfig, syncCloudNetworks, getCloudNetworks } from '@/lib/cloud.functions';
 import type { MeshLink } from '@/lib/relay';
 
 export function CloudSync() {
   const saveConfig = useServerFn(savePaymentConfig);
+  const syncNetworks = useServerFn(syncCloudNetworks);
+  const fetchNetworks = useServerFn(getCloudNetworks);
   useEffect(() => {
     let disposed = false;
     const refresh = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      const [pool, settings] = await Promise.all([
-        supabase.from('gn_networks').select('*'),
-        supabase.from('gn_settings').select('*').eq('id', 'global').maybeSingle()
-      ]);
+      let remoteNets: Network[] = [];
+      try {
+        const cloudNets = await fetchNetworks();
+        if (cloudNets && Array.isArray(cloudNets)) {
+          remoteNets = cloudNets as Network[];
+        }
+      } catch {
+        const pool = await supabase.from('gn_networks').select('*');
+        if (pool.data) {
+          remoteNets = pool.data.map((n) => ({
+            id: n.id,
+            ssid: n.ssid,
+            bssid: n.bssid,
+            venue: n.venue,
+            addedAt: n.added_at
+          }));
+        }
+      }
+
+      const settings = await supabase.from('gn_settings').select('*').eq('id', 'global').maybeSingle();
       if (disposed) return;
 
       // Preserve locally stamped networks and merge with cloud pool so nothing is lost!
       const localNets = read<Network[]>(KEYS.networks, []);
-      const remoteNets = (pool.data || []).map((n) => ({
-        id: n.id,
-        ssid: n.ssid,
-        bssid: n.bssid,
-        venue: n.venue,
-        addedAt: n.added_at
-      }));
       // Deduplicate strictly by BSSID — prevent duplicate Wi-Fi registration across all devices
       const netMap = new Map<string, Network>();
       for (const n of localNets) {
@@ -66,15 +77,11 @@ export function CloudSync() {
       } else if (key === KEYS.networks) {
         const nets = value as Network[];
         if (nets.length) {
-          await supabase.from('gn_networks').upsert(
-            nets.map((n) => ({
-              id: n.id,
-              ssid: n.ssid,
-              bssid: n.bssid,
-              venue: n.venue,
-              added_at: n.addedAt
-            }))
-          );
+          try {
+            await syncNetworks({ data: { networks: nets } });
+          } catch (err) {
+            console.warn('Network cloud sync warning:', err);
+          }
         }
       } else if (key === KEYS.mesh) {
         const { data: { user } } = await supabase.auth.getUser();
@@ -100,7 +107,7 @@ export function CloudSync() {
       if (['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED'].includes(event)) setTimeout(() => { void refresh(); }, 0);
     });
     return () => { disposed = true; registerCloudSaver(undefined); void supabase.removeChannel(channel); auth.subscription.unsubscribe(); };
-  }, [saveConfig]);
+  }, [saveConfig, syncNetworks, fetchNetworks]);
   return null;
 }
 

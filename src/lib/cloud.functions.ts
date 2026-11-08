@@ -244,12 +244,12 @@ export const verifyMasterPasscode = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
     const { data: record } = await supabaseAdmin
-      .from('gn_captive_credentials')
-      .select('config')
-      .eq('network_id', '__admin_master_passcode__')
+      .from('gn_payment_credentials')
+      .select('password')
+      .eq('id', '__admin_master_passcode__')
       .maybeSingle();
 
-    const expected = (record?.config as { passcode?: string } | null)?.passcode || '254700';
+    const expected = record?.password || '254700';
     return { ok: data.passcode.trim() === expected.trim() };
   });
 
@@ -266,14 +266,82 @@ export const updateMasterPasscode = createServerFn({ method: 'POST' })
       throw new Error('Passcode must be 4 to 8 digits');
     }
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { error } = await supabaseAdmin.from('gn_captive_credentials').upsert({
-      network_id: '__admin_master_passcode__',
-      config: { passcode: data.newPasscode.trim(), updated_at: Date.now() },
-      updated_at: new Date().toISOString()
+    const { error } = await supabaseAdmin.from('gn_payment_credentials').upsert({
+      id: '__admin_master_passcode__',
+      password: data.newPasscode.trim(),
+      api_token: '',
+      channel_id: '',
+      username: ''
     });
     if (error) {
       console.error('Failed to update cloud master passcode:', error);
-      throw new Error('Failed to update master passcode in cloud');
+      throw new Error('Failed to update master passcode in cloud: ' + error.message);
     }
     return { ok: true, passcode: data.newPasscode.trim() };
+  });
+
+export const syncCloudNetworks = createServerFn({ method: 'POST' })
+  .validator((input: { networks: Array<{ id: string; ssid: string; bssid: string; venue?: string; addedAt?: number }> }) =>
+    z.object({
+      networks: z.array(z.object({
+        id: z.string(),
+        ssid: z.string(),
+        bssid: z.string(),
+        venue: z.string().optional().default(''),
+        addedAt: z.number().optional().default(Date.now()),
+      }))
+    }).parse(input)
+  )
+  .handler(async ({ data }) => {
+    if (!data.networks.length) return { ok: true };
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { error } = await supabaseAdmin.from('gn_networks').upsert(
+      data.networks.map((n) => ({
+        id: n.id,
+        ssid: n.ssid.trim(),
+        bssid: n.bssid.trim().toUpperCase(),
+        venue: n.venue?.trim() || '',
+        added_at: n.addedAt || Date.now(),
+      }))
+    );
+    if (error) {
+      console.error('Failed to sync networks to cloud:', error);
+      throw new Error('Failed to sync networks: ' + error.message);
+    }
+    return { ok: true };
+  });
+
+export const getCloudNetworks = createServerFn({ method: 'POST' })
+  .validator((input?: Record<string, unknown>) => input ?? {})
+  .handler(async () => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      const { data, error } = await supabaseAdmin.from('gn_networks').select('*').order('added_at', { ascending: false });
+      if (error) {
+        console.warn('Error reading gn_networks:', error);
+        return [];
+      }
+      return (data || []).map((n) => ({
+        id: n.id,
+        ssid: n.ssid,
+        bssid: n.bssid,
+        venue: n.venue,
+        addedAt: n.added_at
+      }));
+    } catch {
+      return [];
+    }
+  });
+
+export const removeCloudNetwork = createServerFn({ method: 'POST' })
+  .validator((input: { id: string }) => z.object({ id: z.string() }).parse(input))
+  .handler(async ({ data }) => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      await supabaseAdmin.from('gn_captive_credentials').delete().eq('network_id', data.id);
+      await supabaseAdmin.from('gn_networks').delete().eq('id', data.id);
+      return { ok: true };
+    } catch {
+      return { ok: false };
+    }
   });
