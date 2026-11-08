@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Trash2, Users, Wallet, Wifi, Database, X } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database } from "lucide-react";
 import { toast } from "sonner";
-import { changePasscode, formatClock, getPass, tick } from "@/lib/rules";
-import { KEYS, defaultConfig, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn } from "@/lib/store";
+import { APP_VERSION, changePasscode, formatClock, getPass, tick } from "@/lib/rules";
+import { useConfig, useDevice } from "@/components/Gates";
+import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
@@ -18,55 +19,74 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const revenue = txns.filter((t) => t.status === "Activated").reduce((a, t) => a + t.amount, 0);
   const gb = live.reduce((a, s) => a + ((s.totalMs - s.remainingMs) / 3600_000) * GB_PER_HOUR, 0);
 
+  const [tab, setTab] = useState<"pool" | "roam" | "pay" | "set">("pool");
+  const tabs = [
+    { id: "pool", label: "Wi-Fi Pool", icon: <Wifi className="h-4 w-4" /> },
+    { id: "roam", label: "Live Roaming", icon: <Radio className="h-4 w-4" /> },
+    { id: "pay", label: "M-Pesa & PayHero", icon: <Wallet className="h-4 w-4" /> },
+    { id: "set", label: "Settings & APK", icon: <Settings className="h-4 w-4" /> },
+  ] as const;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xs uppercase tracking-widest text-accent">Admin Console</div>
-          <h2 className="text-xl font-bold">Dashboard</h2>
+          <h2 className="text-lg font-bold">Dashboard</h2>
         </div>
-        <button onClick={onExit} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-secondary">
-          <LogOut className="h-4 w-4" /> Exit Admin
+        <button onClick={onExit} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-secondary">
+          <LogOut className="h-3.5 w-3.5" /> Exit
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Metric icon={<Wallet />} label="Total Revenue" value={`KES ${revenue.toLocaleString()}`} />
-        <Metric icon={<Users />} label="Active Roaming Clients" value={active.length} />
-        <Metric icon={<Wifi />} label="Wi-Fi Networks in Pool" value={networks.length} />
-        <Metric icon={<Database />} label="Live Data Consumed" value={`${gb.toFixed(2)} GB`} />
+      <div className="grid grid-cols-4 gap-2">
+        <Metric icon={<Wallet />} label="Revenue" value={`${revenue.toLocaleString()}`} />
+        <Metric icon={<Users />} label="Active" value={active.length} />
+        <Metric icon={<Wifi />} label="Pool Wi-Fi" value={networks.length} />
+        <Metric icon={<Database />} label="Data GB" value={gb.toFixed(2)} />
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <PayHeroCard />
-        <PasscodeCard />
+      <div role="tablist" className="sticky top-0 z-10 grid grid-cols-4 gap-1 rounded-xl bg-background/90 p-1 backdrop-blur">
+        {tabs.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
+            className={`flex flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[11px] font-medium leading-tight sm:flex-row sm:justify-center sm:gap-1.5 sm:text-sm ${tab === t.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary"}`}>
+            {t.icon}<span className="text-center">{t.label}</span>
+          </button>
+        ))}
       </div>
-      <PoolManager />
-      <Panel title="Live Clients & Roaming Monitor" icon={<Radio className="h-4 w-4" />}>
-        <Table head={["Phone", "Pass", "Time remaining", "State"]} empty="No active sessions yet."
-          rows={active.map((s) => [
-            `+${s.phone}`, getPass(s.passId).label, <span className="font-mono">{formatClock(s.remainingMs)}</span>,
-            s.online ? <Pill tone="primary">Active</Pill> : <Pill tone="warning">Frozen</Pill>,
-          ])} />
-      </Panel>
-      <RelayMonitor />
-      <Panel title="M-Pesa Transactions Log" icon={<Wallet className="h-4 w-4" />}>
-        <Table head={["Time", "Phone", "Amount", "Reference", "Mode", "Status"]} empty="No transactions yet."
-          rows={txns.map((t) => [
-            new Date(t.at).toLocaleString(), `+${t.phone}`, `KES ${t.amount}`, <span className="font-mono text-xs">{t.ref}</span>, t.mode,
-            <Pill tone={t.status === "Activated" ? "primary" : t.status === "Failed" ? "destructive" : "warning"}>{t.status}</Pill>,
-          ])} />
-      </Panel>
+
+      {tab === "pool" && <PoolManager />}
+      {tab === "roam" && (<>
+        <Panel title="Live Clients & Roaming" icon={<Radio className="h-4 w-4" />}>
+          <Table head={["Phone", "Pass", "Time left", "State"]} empty="No active sessions yet."
+            rows={active.map((s) => [
+              `+${s.phone}`, getPass(s.passId).label, <span className="font-mono">{formatClock(s.remainingMs)}</span>,
+              s.online ? <Pill tone="primary">Active</Pill> : <Pill tone="warning">Frozen</Pill>,
+            ])} />
+        </Panel>
+        <RelayMonitor />
+      </>)}
+      {tab === "pay" && (<>
+        <PayHeroCard />
+        <Panel title="M-Pesa Transactions" icon={<Wallet className="h-4 w-4" />}>
+          <Table head={["Time", "Phone", "Amount", "Reference", "Mode", "Status"]} empty="No transactions yet."
+            rows={txns.map((t) => [
+              new Date(t.at).toLocaleString(), `+${t.phone}`, `KES ${t.amount}`, <span className="font-mono text-xs">{t.ref}</span>, t.mode,
+              <Pill tone={t.status === "Activated" ? "primary" : t.status === "Failed" ? "destructive" : "warning"}>{t.status}</Pill>,
+            ])} />
+        </Panel>
+      </>)}
+      {tab === "set" && (<><AppSettingsCard /><PasscodeCard /></>)}
     </div>
   );
 }
 
 function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: ReactNode }) {
   return (
-    <div className="rounded-xl border border-border bg-secondary/40 p-4">
-      <div className="mb-2 text-accent [&>svg]:h-4 [&>svg]:w-4">{icon}</div>
-      <div className="font-mono text-xl font-bold">{value}</div>
-      <div className="text-xs text-muted-foreground">{label}</div>
+    <div className="rounded-lg border border-border bg-secondary/40 p-2">
+      <div className="text-accent [&>svg]:h-3.5 [&>svg]:w-3.5">{icon}</div>
+      <div className="truncate font-mono text-base font-bold">{value}</div>
+      <div className="truncate text-[10px] text-muted-foreground">{label}</div>
     </div>
   );
 }
@@ -119,9 +139,9 @@ function Secret({ value, onChange, placeholder }: { value: string; onChange: (v:
 }
 
 function PayHeroCard() {
-  const [saved, setSaved] = useStored<PayConfig>(KEYS.config, defaultConfig);
+  const [saved, setSaved] = useConfig();
   const [c, setC] = useState(saved);
-  useEffect(() => setC(saved), [saved]);
+  useEffect(() => setC(saved), [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k: keyof PayConfig) => (v: string | boolean) => setC({ ...c, [k]: v });
   const save = () => {
     if (c.live && (!c.channelId || !(c.apiToken || (c.username && c.password))))
@@ -145,7 +165,6 @@ function PayHeroCard() {
           <Field label="Password"><Secret value={c.password} onChange={set("password")} /></Field>
         </div>
         <Field label="Channel ID"><input className={inputCls} inputMode="numeric" value={c.channelId} onChange={(e) => set("channelId")(e.target.value)} /></Field>
-        <Field label="Android APK download link"><input className={inputCls} value={c.apkUrl} placeholder="https://…/global-networks.apk" onChange={(e) => set("apkUrl")(e.target.value)} /></Field>
         <button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save Configuration</button>
       </div>
     </Panel>
@@ -197,35 +216,64 @@ function PasscodeCard() {
   );
 }
 
-function PoolManager() {
-  const [networks, setNetworks] = useStored<Network[]>(KEYS.networks, []);
-  const [open, setOpen] = useState(false);
-  const [f, setF] = useState({ ssid: "", bssid: "", venue: "" });
-  const add = () => {
-    if (!f.ssid.trim() || !f.bssid.trim()) { toast.error("Wi-Fi name and BSSID are required"); return; }
-    if (!/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/.test(f.bssid.trim())) { toast.error("BSSID must look like AA:BB:CC:DD:EE:FF"); return; }
-    setNetworks((p) => [{ id: uid(), ssid: f.ssid.trim(), bssid: f.bssid.trim().toUpperCase().replace(/-/g, ":"), venue: f.venue.trim(), addedAt: Date.now() }, ...p]);
-    setF({ ssid: "", bssid: "", venue: "" }); setOpen(false); toast.success("Wi-Fi stamped into the pool");
+function AppSettingsCard() {
+  const [saved, setSaved] = useConfig();
+  const [c, setC] = useState(saved);
+  useEffect(() => setC(saved), [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = () => {
+    if (!/^\d+(\.\d+)*$/.test(c.latestVersion.trim())) { toast.error("Version must look like 1.2.0"); return; }
+    setSaved({ ...saved, apkUrl: c.apkUrl.trim(), latestVersion: c.latestVersion.trim(), updateRequired: c.updateRequired });
+    toast.success("App settings saved");
   };
   return (
-    <Panel title="Wi-Fi Master Pool" icon={<Wifi className="h-4 w-4" />}
-      action={<button onClick={() => setOpen(true)} className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground"><Plus className="h-3.5 w-3.5" />Stamp New Wi-Fi</button>}>
-      <Table head={["SSID", "BSSID / MAC", "Venue", ""]} empty="No networks stamped yet."
-        rows={networks.map((n) => [
-          <span className="font-medium">{n.ssid}</span>, <span className="font-mono text-xs">{n.bssid}</span>, n.venue || "—",
-          <button onClick={() => { setNetworks((p) => p.filter((x) => x.id !== n.id)); toast("Removed from pool"); }}
-            className="inline-flex items-center gap-1 rounded-md bg-destructive px-2 py-1 text-xs font-medium text-destructive-foreground"><Trash2 className="h-3 w-3" />Remove from Pool</button>,
-        ])} />
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/80 p-4 backdrop-blur-sm sm:items-center" onClick={() => setOpen(false)}>
-          <div className="w-full max-w-sm space-y-3 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-ambient)]" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between"><h3 className="font-semibold">Stamp New Wi-Fi</h3><button onClick={() => setOpen(false)} aria-label="Close"><X className="h-4 w-4" /></button></div>
-            <Field label="Wi-Fi Name (SSID)"><input className={inputCls} value={f.ssid} onChange={(e) => setF({ ...f, ssid: e.target.value })} /></Field>
-            <Field label="Router BSSID / MAC"><input className={inputCls + " font-mono"} placeholder="AA:BB:CC:DD:EE:FF" value={f.bssid} onChange={(e) => setF({ ...f, bssid: e.target.value })} /></Field>
-            <Field label="Venue Location"><input className={inputCls} placeholder="e.g. Westlands Mall" value={f.venue} onChange={(e) => setF({ ...f, venue: e.target.value })} /></Field>
-            <button onClick={add} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground">Add to Pool</button>
-          </div>
-        </div>
+    <Panel title="Android App & Updates" icon={<Smartphone className="h-4 w-4" />}>
+      <div className="space-y-3">
+        <Field label="APK download link"><input className={inputCls} value={c.apkUrl} placeholder="https://…/global-networks.apk" onChange={(e) => setC({ ...c, apkUrl: e.target.value })} /></Field>
+        <Field label={`Latest version (installed app is ${APP_VERSION})`}><input className={inputCls + " font-mono"} value={c.latestVersion} onChange={(e) => setC({ ...c, latestVersion: e.target.value })} /></Field>
+        <label className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
+          Require users to update
+          <input type="checkbox" checked={c.updateRequired} onChange={(e) => setC({ ...c, updateRequired: e.target.checked })} className="h-5 w-5 accent-[var(--primary)]" />
+        </label>
+        <button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save App Settings</button>
+      </div>
+    </Panel>
+  );
+}
+
+function PoolManager() {
+  const [networks, setNetworks] = useStored<Network[]>(KEYS.networks, []);
+  const [device] = useDevice();
+  const [venue, setVenue] = useState("");
+  const cur = device.currentWifi;
+  const stamp = () => {
+    if (!cur) { toast.error("This phone isn't connected to any Wi-Fi right now"); return; }
+    if (networks.some((n) => n.bssid.toUpperCase() === cur.bssid.toUpperCase())) { toast("This network is already in the pool"); return; }
+    setNetworks((p) => [{ id: uid(), ssid: cur.ssid, bssid: cur.bssid.toUpperCase(), venue: venue.trim(), addedAt: Date.now() }, ...p]);
+    setVenue(""); toast.success(`${cur.ssid} stamped into the pool`);
+  };
+  return (
+    <Panel title="Wi-Fi Master Pool" icon={<Wifi className="h-4 w-4" />}>
+      <div className="mb-4 space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+        <div className="text-xs text-muted-foreground">Currently connected</div>
+        <div className="font-medium">{cur ? <>{cur.ssid} <span className="font-mono text-xs text-muted-foreground">{cur.bssid}</span></> : "Not connected to Wi-Fi"}</div>
+        <input className={inputCls} placeholder="Venue label (optional), e.g. Westlands Mall" value={venue} onChange={(e) => setVenue(e.target.value)} />
+        <button onClick={stamp} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
+          <Plus className="h-4 w-4" />Stamp Current Network
+        </button>
+      </div>
+      {networks.length === 0 ? <p className="py-4 text-center text-sm text-muted-foreground">No networks stamped yet.</p> : (
+        <ul className="space-y-2">
+          {networks.map((n) => (
+            <li key={n.id} className="flex items-center gap-2 rounded-lg border border-border bg-background/50 p-2.5">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{n.ssid}</div>
+                <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
+              </div>
+              <button onClick={() => { setNetworks((p) => p.filter((x) => x.id !== n.id)); toast("Removed from pool"); }}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive px-2 py-1.5 text-xs font-medium text-destructive-foreground"><Trash2 className="h-3 w-3" />Remove from Pool</button>
+            </li>
+          ))}
+        </ul>
       )}
     </Panel>
   );
