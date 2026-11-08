@@ -1,4 +1,4 @@
-import { getAdminPaymentConfig, savePaymentConfig, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks } from "@/lib/cloud.functions";
+import { getAdminPaymentConfig, savePaymentConfig, getCloudTransactionsAndSessions, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks } from "@/lib/cloud.functions";
 import { Capacitor } from "@capacitor/core";
 import { GlobalRelay } from "@/lib/native-relay";
 import { useServerFn } from "@tanstack/react-start";
@@ -16,16 +16,63 @@ import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, type Network, t
 const GB_PER_HOUR = 0.35;
 
 export function AdminDashboard({ onExit }: { onExit: () => void }) {
-  const [txns] = useStored<Txn[]>(KEYS.txns, []);
-  const [sessions] = useStored<Session[]>(KEYS.sessions, []);
+  const [localTxns, setLocalTxns] = useStored<Txn[]>(KEYS.txns, []);
+  const [localSessions, setLocalSessions] = useStored<Session[]>(KEYS.sessions, []);
+  const [cloudTxns, setCloudTxns] = useState<Txn[]>([]);
+  const [cloudSessions, setCloudSessions] = useState<Session[]>([]);
+  const [activeOnly, setActiveOnly] = useState(true);
   const [networks] = useStored<Network[]>(KEYS.networks, []);
   const [now, setNow] = useState(Date.now());
+  const fetchCloudRecords = useServerFn(getCloudTransactionsAndSessions);
+
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const sync = async () => {
+      try {
+        const res = await fetchCloudRecords({ data: {} });
+        if (!cancelled && res) {
+          if (res.txns?.length) {
+            setCloudTxns(res.txns);
+            setLocalTxns((prev) => {
+              const ids = new Set(res.txns.map((t) => t.id));
+              const extra = prev.filter((p) => !ids.has(p.id));
+              return [...res.txns, ...extra];
+            });
+          }
+          if (res.sessions?.length) {
+            setCloudSessions(res.sessions);
+            setLocalSessions((prev) => {
+              const ids = new Set(res.sessions.map((s) => s.id));
+              const extra = prev.filter((p) => !ids.has(p.id));
+              return [...res.sessions, ...extra];
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Cloud records sync failed:", err);
+      }
+    };
+    void sync();
+    const interval = setInterval(() => { void sync(); }, 4000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [fetchCloudRecords, setLocalTxns, setLocalSessions]);
+
+  const txns = cloudTxns.length ? cloudTxns : localTxns;
+  const sessions = cloudSessions.length ? cloudSessions : localSessions;
 
   const live = sessions.map((s) => ({ ...s, remainingMs: tick(s.remainingMs, s.lastTick, now, s.online) }));
   const active = live.filter((s) => s.remainingMs > 0);
   const revenue = txns.filter((t) => t.status === "Activated").reduce((a, t) => a + t.amount, 0);
   const gb = live.reduce((a, s) => a + ((s.totalMs - s.remainingMs) / 3600_000) * GB_PER_HOUR, 0);
+
+  const isTxnActive = (t: Txn) => {
+    if (t.status !== "Activated") return false;
+    const durationMs = (getPass(t.passId)?.hours ?? 24) * 3600_000;
+    return now <= t.at + durationMs;
+  };
+  const displayTxns = activeOnly ? txns.filter(isTxnActive) : txns;
 
   const [tab, setTab] = useState<"pool" | "roam" | "pay" | "set">("pool");
   const tabs = [
@@ -76,9 +123,22 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       </>)}
       {tab === "pay" && (<>
         <PayHeroCard />
-        <Panel title="M-Pesa Transactions" icon={<Wallet className="h-4 w-4" />}>
-          <Table head={["Time", "Phone", "Amount", "Reference", "Mode", "Status"]} empty="No transactions yet."
-            rows={txns.map((t) => [
+        <Panel
+          title="M-Pesa Transactions"
+          icon={<Wallet className="h-4 w-4" />}
+          action={
+            <Button
+              type="button"
+              variant={activeOnly ? "default" : "outline"}
+              className="h-7 px-2.5 text-xs"
+              onClick={() => setActiveOnly((p) => !p)}
+            >
+              {activeOnly ? "Active Passes (Auto-Expires)" : "Show All History"}
+            </Button>
+          }
+        >
+          <Table head={["Time", "Phone", "Amount", "Reference", "Mode", "Status"]} empty={activeOnly ? "No active pass payments currently." : "No transactions yet."}
+            rows={displayTxns.map((t) => [
               new Date(t.at).toLocaleString(), `+${t.phone}`, `KES ${t.amount}`, <span className="font-mono text-xs">{t.ref}</span>, t.mode,
               <Pill tone={t.status === "Activated" ? "primary" : t.status === "Failed" ? "destructive" : "warning"}>{t.status}</Pill>,
             ])} />
@@ -211,10 +271,12 @@ function PayHeroCard() {
     setSaved(c);
     try {
       await saveCloudConfig({ data: c });
+      toast.success("PayHero settings saved to cloud");
     } catch (err) {
-      console.warn("Cloud save deferred:", err);
+      console.warn("Cloud save error:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to save to cloud");
+      return;
     }
-    toast.success("PayHero settings saved");
     setAuthOpen(false);
     setPasscode("");
   };
@@ -222,13 +284,23 @@ function PayHeroCard() {
   return (
     <Panel title="PayHero Configuration" icon={<KeyRound className="h-4 w-4" />}>
       <div className="space-y-3">
-        <div className="grid grid-cols-2 gap-1 rounded-lg bg-background p-1 text-sm">
-          {[false, true].map((l) => (
-            <Button key={String(l)} onClick={() => set("live")(l)}
-              className={`rounded-md py-2 font-medium ${c.live === l ? (l ? "bg-primary text-primary-foreground" : "bg-secondary") : "text-muted-foreground"}`}>
-              {l ? "Live PayHero STK Push" : "Demo Simulation Mode"}
-            </Button>
-          ))}
+        <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-background p-1 text-sm">
+          <Button
+            type="button"
+            variant={!c.live ? "default" : "ghost"}
+            onClick={() => set("live")(false)}
+            className="rounded-md py-2 font-medium"
+          >
+            Demo Simulation Mode
+          </Button>
+          <Button
+            type="button"
+            variant={c.live ? "default" : "ghost"}
+            onClick={() => set("live")(true)}
+            className="rounded-md py-2 font-medium"
+          >
+            Live PayHero STK Push
+          </Button>
         </div>
         <Field label="API Key / Basic Auth Token"><Secret value={c.apiToken} onChange={set("apiToken")} placeholder="Basic xxxxx (optional if username/password set)" /></Field>
         <div className="grid grid-cols-2 gap-3">

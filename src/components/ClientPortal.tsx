@@ -66,24 +66,24 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   async function pay() {
     const msisdn = normalizePhone(phone);
     if (!msisdn) { toast.error("Enter a valid Safaricom number (07… or 01…)"); return; }
-    const cfg = read<PayConfig>(KEYS.config, defaultConfig);
-    const live = Boolean(cfg.live);
-    const txnId = uid();
-    let ref = "GN" + uid();
-    setTxns((p) => [{ id: txnId, phone: msisdn, amount: pass.amount, passId, ref, at: Date.now(), status: "Pending", mode: live ? "Live" : "Demo" }, ...p]);
-
+    
+    setBusy("Sending M-Pesa prompt to your phone…");
+    const deviceId = getDeviceId();
+    let currentTxnId = uid();
     try {
-      if (live) {
-        setBusy("Sending M-Pesa prompt to your phone…");
-        const deviceId = getDeviceId();
-        const r = await startPayment({ data: { phone: msisdn, passId: pass.id as 'p15' | 'p30', deviceId } });
-        if (r.ref) ref = r.ref;
-        updateTxn(txnId, { ref });
+      const r = await startPayment({ data: { phone: msisdn, passId: pass.id as 'p15' | 'p30', deviceId } });
+      currentTxnId = r.id;
+      const ref = r.ref || ("GN" + uid());
+      setTxns((p) => [{ id: r.id, phone: msisdn, amount: pass.amount, passId, ref, at: Date.now(), status: "Pending", mode: r.live ? "Live" : "Demo" }, ...p]);
+
+      if (r.live) {
         setBusy("Enter your M-Pesa PIN on your phone…");
         let ok = false;
         let activatedSession: Session | null = null;
-        for (let i = 0; i < 30 && !ok; i++) {
-          await new Promise((res) => setTimeout(res, 3000));
+        for (let i = 0; i < 60 && !ok; i++) {
+          if (i > 0) {
+            await new Promise((res) => setTimeout(res, 1000));
+          }
           const st = await confirmPayment({ data: { id: r.id, deviceId } });
           if (!st.pending && st.session) {
             ok = true;
@@ -91,24 +91,19 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           }
         }
         if (!ok || !activatedSession) throw new Error("Payment timed out. If you already completed payment, tap 'Restore Active Pass'.");
-        updateTxn(txnId, { status: "Activated" });
+        updateTxn(r.id, { status: "Activated" });
         onActivated(activatedSession);
         toast.success("Payment received — pass activated!");
       } else {
-        setBusy("Sending M-Pesa prompt to your phone…");
-        await new Promise((r) => setTimeout(r, 1200));
-        setBusy("Confirming payment…");
-        await new Promise((r) => setTimeout(r, 1200));
-        ref = "S" + uid() + "K";
-        updateTxn(txnId, { ref, status: "Activated" });
-        const now = Date.now();
-        const ms = pass.hours * 3600_000;
-        const s: Session = { id: uid(), phone: msisdn, passId, totalMs: ms, remainingMs: ms, lastTick: now, online: true, startedAt: now };
-        onActivated(s);
+        setBusy("Confirming demo pass…");
+        const st = await confirmPayment({ data: { id: r.id, deviceId } });
+        if (!st.session) throw new Error("Demo pass could not be activated");
+        updateTxn(r.id, { status: "Activated" });
+        onActivated(st.session);
         toast.success("Demo pass activated — no money charged");
       }
     } catch (e) {
-      updateTxn(txnId, { status: "Failed" });
+      updateTxn(currentTxnId, { status: "Failed" });
       toast.error(e instanceof Error ? e.message : "Payment failed");
     } finally {
       setBusy(null);

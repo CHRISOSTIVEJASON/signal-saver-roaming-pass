@@ -43,7 +43,10 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
         password: data.password || '',
         channel_id: data.channelId || ''
       });
-      if (error) console.error('Unable to save payment credentials:', error);
+      if (error) {
+        console.error('Unable to save payment credentials:', error);
+        throw new Error('Unable to save payment credentials: ' + error.message);
+      }
     }
     const { error } = await supabaseAdmin.from('gn_settings').upsert({
       id: 'global',
@@ -343,5 +346,24 @@ export const removeCloudNetwork = createServerFn({ method: 'POST' })
       return { ok: true };
     } catch {
       return { ok: false };
+    }
+  });
+
+
+export const getCloudTransactionsAndSessions = createServerFn({ method: 'POST' })
+  .validator((input?: Record<string, unknown>) => input ?? {})
+  .handler(async () => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      const [txnsRes, sessionsRes] = await Promise.all([
+        supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(100),
+        supabaseAdmin.from('gn_sessions').select('*').order('updated_at', { ascending: false }).limit(100)
+      ]);
+      const txns = (txnsRes.data || []).map((t) => t.payload as unknown as Txn);
+      const sessions = (sessionsRes.data || []).map((s) => s.payload as unknown as Session);
+      return { txns, sessions };
+    } catch (err) {
+      console.warn('Unable to read cloud transactions and sessions:', err);
+      return { txns: [], sessions: [] };
     }
   });
