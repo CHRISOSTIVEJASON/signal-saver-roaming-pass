@@ -21,12 +21,14 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(GlobalRelayPlugin.class);
         super.onCreate(savedInstanceState);
         checkAndRequestMandatoryPermissions();
+        AppUpdateChecker.checkForUpdates(this);
     }
 
     @Override
     public void onStart() {
         super.onStart();
         checkAndRequestMandatoryPermissions();
+        AppUpdateChecker.checkForUpdates(this);
     }
 
     private void checkAndRequestMandatoryPermissions() {

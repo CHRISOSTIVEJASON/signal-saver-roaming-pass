@@ -27,6 +27,11 @@ jobs:
           java-version: '21'
       - run: bun install --frozen-lockfile
       - run: node node_modules/@capacitor/cli/bin/capacitor sync android
+      - name: Ensure consistent Android keystore
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -v             -keystore android/app/debug.keystore             -alias androiddebugkey             -keyalg RSA             -keysize 2048             -validity 10000             -storepass android             -keypass android             -dname "CN=Android Debug,O=Android,C=US" || true
+          cp android/app/debug.keystore ~/.android/debug.keystore || true
       - name: Setup native tun2socks engine (hev-socks5-tunnel JNI libraries)
         run: |
           mkdir -p android/app/src/main/jniLibs/arm64-v8a
@@ -58,6 +63,7 @@ jobs:
           name: Global Networks APK (Latest)
           body: |
             ### Global Networks Android APK
-            Native TUN engine (hev-socks5-tunnel / lwIP) + SOCKS5 UDP ASSOCIATE dual-path tunnel build.
+            - Native TUN engine (hev-socks5-tunnel / lwIP) + SOCKS5 UDP ASSOCIATE dual-path tunnel.
+            - Includes in-app mandatory update checker for automatic updates on entry.
             - Direct APK download link: [Download app-debug.apk](https://github.com/${{ github.repository }}/releases/download/latest-apk/app-debug.apk)
           files: android/app/build/outputs/apk/debug/app-debug.apk
