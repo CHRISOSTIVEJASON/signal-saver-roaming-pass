@@ -9,7 +9,7 @@ export type PayConfig = {
   username: string;
   password: string;
   channelId: string;
-  live: boolean;
+  live?: boolean | undefined;
   apkUrl: string;
   latestVersion: string;
   updateRequired: boolean;

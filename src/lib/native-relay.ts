@@ -25,7 +25,7 @@ export const GlobalRelay = registerPlugin<{
   stop(): Promise<void>;
   syncWatcherConfig(options: { poolSsids: string[]; poolBssids: string[]; hasActivePass: boolean }): Promise<{ success: boolean }>;
   playBeepTone(): Promise<{ success: boolean }>;
-  submitCaptivePortal(options: { bssid: string; loginUrl: string; fields: Record<string, string> }): Promise<{ validated: boolean }>;
+  submitCaptivePortal(options: { bssid?: string; ssid?: string; loginUrl?: string; portalUrl?: string; fields?: Record<string, string>; voucherCode?: string; phoneNumber?: string }): Promise<{ validated: boolean; success?: boolean; statusCode?: number; message?: string }>;
   installUpdate(options: { url: string }): Promise<{ success: boolean; message?: string }>;
   addListener(event: 'stateChanged', callback: (state: NativeState) => void): Promise<PluginListenerHandle>;
   addListener(event: 'updateProgress', callback: (data: UpdateProgressData) => void): Promise<PluginListenerHandle>;

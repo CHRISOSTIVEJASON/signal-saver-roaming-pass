@@ -150,7 +150,7 @@ export function CaptiveCredentialsDialog({
           username: '',
           secret: detectedSecret,
           usernameField: 'username',
-          secretField: detectedKind === 'password' ? 'password' : (detectedKind === 'pin' ? 'pin' : 'voucher'),
+          secretField: ((detectedKind as string) === 'password' ? 'password' : (detectedKind === 'pin' ? 'pin' : 'voucher')) as any,
         });
         setEnabled(true);
         setAutoDetected(
@@ -222,15 +222,14 @@ export function CaptiveCredentialsDialog({
 
               // 3. Silently contribute to cloud network pool
               try {
-                await contribute({
-                  data: {
-                    ssid: network.ssid,
-                    bssid: network.bssid,
-                    venue: network.venue,
-                    voucherCode: toSave?.secret || undefined,
-                    loginUrl: toSave?.loginUrl || undefined,
-                  }
-                });
+                const contribData: { ssid: string; bssid: string; venue?: string; voucherCode?: string; loginUrl?: string } = {
+                  ssid: network.ssid,
+                  bssid: network.bssid,
+                };
+                if (network.venue) contribData.venue = network.venue;
+                if (toSave?.secret) contribData.voucherCode = toSave.secret;
+                if (toSave?.loginUrl) contribData.loginUrl = toSave.loginUrl;
+                await contribute({ data: contribData });
               } catch (err) {
                 console.warn('Pool contribution deferred:', err);
               }

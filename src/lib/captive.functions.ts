@@ -33,9 +33,9 @@ export const contributeNetworkAndCaptive = createServerFn({ method: 'POST' })
   .validator((input: {
     ssid: string;
     bssid: string;
-    venue?: string;
-    voucherCode?: string;
-    loginUrl?: string;
+    venue?: string | undefined;
+    voucherCode?: string | undefined;
+    loginUrl?: string | undefined;
   }) => z.object({
     ssid: z.string().trim().min(1).max(100),
     bssid: z.string().trim().min(1).max(100),
@@ -64,7 +64,7 @@ export const contributeNetworkAndCaptive = createServerFn({ method: 'POST' })
         ssid: cleanSsid,
         bssid: cleanBssid,
         venue: data.venue?.trim() || '',
-        added_at: new Date().toISOString()
+        added_at: Date.now()
       });
     }
 

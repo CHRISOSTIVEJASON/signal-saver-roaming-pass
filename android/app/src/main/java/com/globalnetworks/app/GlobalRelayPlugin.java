@@ -438,14 +438,19 @@ public class GlobalRelayPlugin extends Plugin {
     public void submitCaptivePortal(PluginCall call) {
         String ssid = call.getString("ssid");
         String portalUrl = call.getString("portalUrl");
+        if (portalUrl == null || portalUrl.isEmpty()) {
+            portalUrl = call.getString("loginUrl");
+        }
         String voucherCode = call.getString("voucherCode");
         String phoneNumber = call.getString("phoneNumber");
+        com.getcapacitor.JSObject fields = call.getObject("fields");
 
         if (portalUrl == null || portalUrl.isEmpty()) {
-            call.reject("portalUrl is required");
+            call.reject("portalUrl or loginUrl is required");
             return;
         }
 
+        final String finalPortalUrl = portalUrl;
         portalExecutor.execute(() -> {
             try {
                 ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -460,7 +465,7 @@ public class GlobalRelayPlugin extends Plugin {
                     }
                 }
 
-                URL url = new URL(portalUrl);
+                URL url = new URL(finalPortalUrl);
                 HttpURLConnection conn;
                 if (targetNetwork != null && Build.VERSION.SDK_INT >= 23) {
                     conn = (HttpURLConnection) targetNetwork.openConnection(url);
@@ -476,12 +481,22 @@ public class GlobalRelayPlugin extends Plugin {
                 conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
 
                 StringBuilder postData = new StringBuilder();
-                if (voucherCode != null && !voucherCode.isEmpty()) {
+                if (fields != null) {
+                    java.util.Iterator<String> keys = fields.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        String val = fields.getString(key, "");
+                        if (postData.length() > 0) postData.append("&");
+                        postData.append(URLEncoder.encode(key, "UTF-8")).append("=").append(URLEncoder.encode(val, "UTF-8"));
+                    }
+                }
+                if (voucherCode != null && !voucherCode.isEmpty() && (fields == null || (!fields.has("voucher") && !fields.has("code") && !fields.has("pin")))) {
+                    if (postData.length() > 0) postData.append("&");
                     postData.append("voucher=").append(URLEncoder.encode(voucherCode, "UTF-8"));
                     postData.append("&code=").append(URLEncoder.encode(voucherCode, "UTF-8"));
                     postData.append("&pin=").append(URLEncoder.encode(voucherCode, "UTF-8"));
                 }
-                if (phoneNumber != null && !phoneNumber.isEmpty()) {
+                if (phoneNumber != null && !phoneNumber.isEmpty() && (fields == null || !fields.has("phone"))) {
                     if (postData.length() > 0) postData.append("&");
                     postData.append("phone=").append(URLEncoder.encode(phoneNumber, "UTF-8"));
                 }
@@ -496,6 +511,7 @@ public class GlobalRelayPlugin extends Plugin {
                 boolean success = code >= 200 && code < 400;
 
                 JSObject res = new JSObject();
+                res.put("validated", success);
                 res.put("success", success);
                 res.put("statusCode", code);
                 res.put("message", "Submitted with response code " + code);

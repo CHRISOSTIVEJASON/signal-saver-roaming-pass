@@ -11,7 +11,7 @@ import type { MeshLink } from "@/lib/relay";
 import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
 import { saveShared } from '@/lib/cloud-cache';
 import { useConfig, useDevice } from "@/components/Gates";
-import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn, getPasscode } from "@/lib/store";
+import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
@@ -412,7 +412,8 @@ function AppSettingsCard() {
     const next = { ...saved, apkUrl: c.apkUrl.trim(), latestVersion: c.latestVersion.trim(), updateRequired: c.updateRequired };
     try {
       setSaved(next);
-      await saveCloudSettings({ data: next });
+      // Preserve live mode: never overwrite live status from general app settings
+      await saveCloudSettings({ data: { ...next, live: undefined } });
       toast.success("App settings saved and synced to all devices");
     } catch (err) {
       console.warn("Failed cloud settings save:", err);

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { BatteryCharging, Download, FlaskConical, RefreshCw, Settings, ShieldAlert, Share2, Wifi, X, Laptop } from "lucide-react";
 import { toast } from "sonner";
 import { Capacitor } from "@capacitor/core";
@@ -34,24 +34,56 @@ function openApk(url: string) {
 
 export function DownloadGate() {
   const [cfg] = useConfig();
+  const [, setDevice] = useDevice();
+  const isMobile = typeof navigator !== "undefined" && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+  const continueOnLaptop = () => {
+    setDevice((prev) => ({
+      ...prev,
+      appMode: true,
+      onboarded: true,
+      perms: { background: "granted", wifi: "granted", relay: "granted" },
+    }));
+  };
+
   return (
     <div className="space-y-5 text-center">
       <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10">
         <Download className="h-8 w-8 text-primary" />
       </div>
       <div>
-        <h2 className="text-xl font-bold">Download Global Networks Android App</h2>
-        <p className="mt-2 text-sm text-muted-foreground">Buy a pass with M-Pesa and get connected automatically at any Global Networks hotspot.</p>
+        <h2 className="text-xl font-bold">{isMobile ? "Download Global Networks Android App" : "Global Networks Web Portal"}</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          {isMobile
+            ? "On a mobile phone, please download and install the Android app to connect to the pool and share Wi-Fi."
+            : "Buy a pass with M-Pesa or restore your active pass right here on your laptop."}
+        </p>
       </div>
+
+      {!isMobile && (
+        <Button onClick={continueOnLaptop}
+          className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-[0_0_24px_-6px_var(--primary)] hover:brightness-110">
+          Continue to Laptop Web Portal
+        </Button>
+      )}
+
       <Button onClick={() => openApk(cfg.apkUrl)}
-        className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-[0_0_24px_-6px_var(--primary)] hover:brightness-110">
-        <Download className="h-5 w-5" /> Download for Android
+        variant={!isMobile ? "outline" : "default"}
+        className={!isMobile ? "flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-border text-sm font-semibold hover:bg-secondary" : "flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-[0_0_24px_-6px_var(--primary)] hover:brightness-110"}>
+        <Download className="h-5 w-5" /> Download Android APK
       </Button>
-      <ul className="space-y-1 text-left text-xs text-muted-foreground">
-        <li>1. Tap download and open the file.</li>
-        <li>2. If asked, allow installing from this source.</li>
-        <li>3. Open Global Networks and pick a pass.</li>
-      </ul>
+
+      {isMobile ? (
+        <ul className="space-y-1 text-left text-xs text-muted-foreground">
+          <li>1. Tap download and open the file.</li>
+          <li>2. If asked, allow installing from this source.</li>
+          <li>3. Open Global Networks and pick a pass.</li>
+        </ul>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Using a laptop? You can purchase passes or access administrative settings directly from your browser.
+        </p>
+      )}
       <p className="text-[11px] text-muted-foreground">Version {cfg.latestVersion || APP_VERSION}</p>
     </div>
   );

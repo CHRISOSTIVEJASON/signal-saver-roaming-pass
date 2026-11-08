@@ -81,7 +81,7 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
       apk_url: data.apkUrl !== undefined && data.apkUrl !== '' ? data.apkUrl : (existingSettings?.apk_url || ''),
       latest_version: data.latestVersion !== undefined && data.latestVersion !== '' ? data.latestVersion : (existingSettings?.latest_version || '1.0.0'),
       update_required: data.updateRequired !== undefined ? Boolean(data.updateRequired) : Boolean(existingSettings?.update_required),
-      live: data.live !== undefined ? Boolean(data.live) : (existingSettings?.live ?? false)
+      live: typeof data.live === "boolean" ? data.live : (existingSettings?.live ?? false)
     });
     if (settingsError) throw new Error('Unable to save settings');
     return { ok: true };
@@ -278,6 +278,7 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
     if (matching.length === 0) throw new Error('No unexpired pass found for this phone number');
 
     const targetRow = matching[0];
+    if (!targetRow) throw new Error('No unexpired pass found for this phone number');
     const payload = targetRow.payload as any;
 
     // Check device binding to prevent sharing across multiple phones

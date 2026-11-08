@@ -81,6 +81,12 @@ public class RelayVpnService extends VpnService {
     private synchronized void startVpnTunnel() {
         if (isRunning.get()) return;
 
+        // Blackhole safeguard: never establish 0.0.0.0/0 route if native engine is not loaded
+        if (!TProxyService.isLoaded()) {
+            Log.w(TAG, "Native tun2socks engine library is not bundled; skipping VPN route to prevent network blackhole.");
+            return;
+        }
+
         try {
             Builder builder = new Builder();
             builder.setSession("Global Networks Client Router");

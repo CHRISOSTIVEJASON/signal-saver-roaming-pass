@@ -29,13 +29,20 @@ function Index() {
   const verifyCloudPasscode = useServerFn(verifyMasterPasscode);
 
   const isNative = typeof window !== "undefined" && (Capacitor.isNativePlatform() || window.location.protocol === "capacitor:" || Boolean((window as any).Capacitor?.isNativePlatform?.()));
+  const isMobile = typeof navigator !== "undefined" && /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  const isLaptopOrDesktop = typeof window !== "undefined" && !isNative && !isMobile;
 
-  // Auto-enable app mode on native Android so users bypass the download page instantly
+  // Auto-enable app mode on native Android and on laptop/desktop web browsers
   useEffect(() => {
-    if (isNative && !device.appMode) {
-      setDevice((prev) => ({ ...prev, appMode: true }));
+    if ((isNative || isLaptopOrDesktop) && (!device.appMode || (isLaptopOrDesktop && !device.onboarded))) {
+      setDevice((prev) => ({
+        ...prev,
+        appMode: true,
+        onboarded: isLaptopOrDesktop ? true : prev.onboarded,
+        perms: isLaptopOrDesktop ? { background: "granted", wifi: "granted", relay: "granted" } : prev.perms,
+      }));
     }
-  }, [isNative, device.appMode, setDevice]);
+  }, [isNative, isLaptopOrDesktop, device.appMode, device.onboarded, setDevice]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -48,15 +55,16 @@ function Index() {
     };
   }, []);
 
-  const allGranted = Object.values(device.perms).every((v) => v === "granted");
-  const inApp = device.appMode || isNative;
+  const allGranted = isLaptopOrDesktop || Object.values(device.perms).every((v) => v === "granted");
+  const inApp = isLaptopOrDesktop || device.appMode || isNative;
   const body = admin ? <AdminDashboard onExit={() => setAdmin(false)} />
     : !inApp ? <DownloadGate />
-    : (!device.onboarded) ? <Onboarding />
+    : (!device.onboarded && !isLaptopOrDesktop) ? <Onboarding />
     : (!allGranted) ? <PermissionBlock />
     : <ClientPortal />;
 
-  const mustUpdate = !admin && inApp && isUpdateRequired(APP_VERSION, cfg.latestVersion, cfg.updateRequired);
+  // Only lock native Android APK clients for APK updates; web clients always run latest web build
+  const mustUpdate = !admin && inApp && isNative && isUpdateRequired(APP_VERSION, cfg.latestVersion, cfg.updateRequired);
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
