@@ -189,9 +189,7 @@ public final class AppUpdateChecker {
                     if (!activity.isFinishing()) {
                         new AlertDialog.Builder(activity)
                                 .setTitle("Update Failed")
-                                .setMessage("Failed to download update: " + e.getMessage() + "
-
-Please check your internet connection.")
+                                .setMessage("Failed to download update: " + e.getMessage() + "\n\nPlease check your internet connection.")
                                 .setCancelable(false)
                                 .setPositiveButton("Retry", (d, w) -> downloadAndInstall(activity, downloadUrl))
                                 .show();
