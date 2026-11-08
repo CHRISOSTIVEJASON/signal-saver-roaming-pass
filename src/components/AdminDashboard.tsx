@@ -366,8 +366,11 @@ function PoolManager() {
   const [networks, setNetworks] = useStored<Network[]>(KEYS.networks, []);
   const [device] = useDevice();
   const [manualSsid, setManualSsid] = useState("");
+  const [manualBssid, setManualBssid] = useState("");
   const [venue, setVenue] = useState("");
+  const [isCaptive, setIsCaptive] = useState(false);
   const [editing, setEditing] = useState<Network | null>(null);
+  const [pendingCaptiveNetwork, setPendingCaptiveNetwork] = useState<Network | null>(null);
   const [stamping, setStamping] = useState(false);
   const cur = device.currentWifi;
 
@@ -377,20 +380,34 @@ function PoolManager() {
       toast.error("Enter network SSID or connect phone to Wi-Fi to stamp");
       return;
     }
-    const rawBssid = (cur?.bssid || ("GN:" + Math.abs(rawSsid.split("").reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)).toString(16).toUpperCase())).trim().toUpperCase();
-    if (networks.some((n) => n.bssid.toUpperCase() === rawBssid)) {
-      toast("This network is already in the pool");
+    const rawBssid = (cur?.bssid || manualBssid.trim() || ("GN:" + Math.abs(rawSsid.split("").reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)).toString(16).toUpperCase())).trim().toUpperCase();
+    
+    // Check duplication strictly by BSSID: networks may share the same name (SSID),
+    // but the exact same hardware BSSID must never be stamped twice into the pool!
+    if (networks.some((n) => n.bssid.trim().toUpperCase() === rawBssid)) {
+      toast.error(`Network with BSSID ${rawBssid} is already in the pool! Duplicate BSSID is not allowed.`);
       return;
     }
-    const network = { id: uid(), ssid: rawSsid, bssid: rawBssid, venue: venue.trim(), addedAt: Date.now() };
+
+    const network: Network = { id: uid(), ssid: rawSsid, bssid: rawBssid, venue: venue.trim(), addedAt: Date.now() };
+
+    // If captive is checked, do NOT save yet — open the credentials dialogue box first
+    if (isCaptive) {
+      setPendingCaptiveNetwork(network);
+      return;
+    }
+
+    // If not captive, finish the process directly on save with feedback
     setStamping(true);
     try {
-      setNetworks([network, ...networks]);
-      void saveShared(KEYS.networks, [network, ...networks]).catch(() => {});
+      const nextNetworks = [network, ...networks];
+      setNetworks(nextNetworks);
+      void saveShared(KEYS.networks, nextNetworks).catch(() => {});
       setVenue("");
       setManualSsid("");
-      toast.success(`${rawSsid} stamped into the pool`);
-      setEditing(network);
+      setManualBssid("");
+      setIsCaptive(false);
+      toast.success(`Stored!! ${rawSsid} stamped into pool`);
     } catch {
       toast.error("Unable to stamp network");
     } finally {
@@ -400,13 +417,13 @@ function PoolManager() {
 
   return (
     <Panel title="Wi-Fi Master Pool" icon={<Wifi className="h-4 w-4" />}>
-      <div className="mb-4 space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+      <div className="mb-4 space-y-2.5 rounded-lg border border-primary/30 bg-primary/5 p-3">
         <div className="text-xs text-muted-foreground">Currently connected</div>
         <div className="font-medium">
           {cur ? (
             <>{cur.ssid} <span className="font-mono text-xs text-muted-foreground">{cur.bssid}</span></>
           ) : (
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <span className="text-warning text-xs">Wi-Fi auto-detect waiting or restricted:</span>
               <input
                 className={inputCls}
@@ -414,12 +431,27 @@ function PoolManager() {
                 value={manualSsid}
                 onChange={(e) => setManualSsid(e.target.value)}
               />
+              <input
+                className={inputCls + " font-mono text-xs"}
+                placeholder="Wi-Fi BSSID (optional, e.g. 00:1A:2B:3C:4D:5E)"
+                value={manualBssid}
+                onChange={(e) => setManualBssid(e.target.value)}
+              />
             </div>
           )}
         </div>
         <input className={inputCls} placeholder="Venue label (optional), e.g. Westlands Mall" value={venue} onChange={(e) => setVenue(e.target.value)} />
+        <label className="flex items-center gap-2.5 rounded-lg border border-border bg-background/50 p-2.5 text-xs font-medium cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isCaptive}
+            onChange={(e) => setIsCaptive(e.target.checked)}
+            className="h-4 w-4 rounded accent-[var(--primary)]"
+          />
+          <span>Requires captive portal login (voucher, username, or PIN)</span>
+        </label>
         <Button onClick={stamp} disabled={stamping} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
-          <Plus className="h-4 w-4" />Stamp Network into Pool
+          <Plus className="h-4 w-4" />{isCaptive ? "Configure & Save Captive Wi-Fi" : "Save Wi-Fi Network into Pool"}
         </Button>
       </div>
       {networks.length === 0 ? <p className="py-4 text-center text-sm text-muted-foreground">No networks stamped yet.</p> : (
@@ -431,13 +463,48 @@ function PoolManager() {
                 <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
               </div>
               <Button variant="outline" size="icon" title="Edit network login" aria-label={`Edit network login for ${n.ssid}`} onClick={() => setEditing(n)}><KeyRound className="h-4 w-4" /></Button>
-              <Button onClick={() => { setNetworks((p) => p.filter((x) => x.id !== n.id)); toast("Removed from pool"); }}
+              <Button onClick={async () => {
+                const next = networks.filter((x) => x.id !== n.id && x.bssid.toUpperCase() !== n.bssid.toUpperCase());
+                setNetworks(next);
+                void saveShared(KEYS.networks, next).catch(() => {});
+                try {
+                  const { supabase } = await import('@/integrations/supabase/client');
+                  await supabase.from('gn_networks').delete().eq('id', n.id);
+                } catch {}
+                toast("Removed from pool");
+              }}
                 className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive px-2 py-1.5 text-xs font-medium text-destructive-foreground"><Trash2 className="h-3 w-3" />Remove from Pool</Button>
             </li>
           ))}
         </ul>
       )}
-      {editing && <CaptiveCredentialsDialog network={editing} onClose={() => setEditing(null)} />}
+      {pendingCaptiveNetwork && (
+        <CaptiveCredentialsDialog
+          network={pendingCaptiveNetwork}
+          initialCaptiveRequired={true}
+          onSaved={() => {
+            const nextNetworks = [pendingCaptiveNetwork, ...networks];
+            setNetworks(nextNetworks);
+            void saveShared(KEYS.networks, nextNetworks).catch(() => {});
+            setVenue("");
+            setManualSsid("");
+            setManualBssid("");
+            setIsCaptive(false);
+            setPendingCaptiveNetwork(null);
+            toast.success(`Stored!! ${pendingCaptiveNetwork.ssid} captive network saved to pool`);
+          }}
+          onClose={() => setPendingCaptiveNetwork(null)}
+        />
+      )}
+      {editing && (
+        <CaptiveCredentialsDialog
+          network={editing}
+          onSaved={() => {
+            toast.success(`Stored!! ${editing.ssid} credentials updated`);
+          }}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </Panel>
   );
 }

@@ -27,9 +27,14 @@ export function CloudSync() {
         venue: n.venue,
         addedAt: n.added_at
       }));
+      // Deduplicate strictly by BSSID — prevent duplicate Wi-Fi registration across all devices
       const netMap = new Map<string, Network>();
-      for (const n of localNets) netMap.set(n.id || n.bssid, n);
-      for (const n of remoteNets) netMap.set(n.id || n.bssid, n);
+      for (const n of localNets) {
+        if (n && n.bssid) netMap.set(n.bssid.trim().toUpperCase(), n);
+      }
+      for (const n of remoteNets) {
+        if (n && n.bssid) netMap.set(n.bssid.trim().toUpperCase(), n);
+      }
       publishCache(KEYS.networks, Array.from(netMap.values()));
 
       // Preserve local PayHero credentials so they remain displayed on the dashboard!

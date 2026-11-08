@@ -8,10 +8,20 @@ import type { Network } from '@/lib/store';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 
-export function CaptiveCredentialsDialog({ network, onClose }: { network: Network; onClose: () => void }) {
+export function CaptiveCredentialsDialog({
+  network,
+  initialCaptiveRequired = false,
+  onSaved,
+  onClose,
+}: {
+  network: Network;
+  initialCaptiveRequired?: boolean;
+  onSaved?: () => void;
+  onClose: () => void;
+}) {
   const load = useServerFn(getAdminCaptive), save = useServerFn(saveAdminCaptive);
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [show, setShow] = useState(false);
-  const [enabled, setEnabled] = useState(false);
+  const [enabled, setEnabled] = useState(initialCaptiveRequired);
   const [config, setConfig] = useState<CaptiveConfig>({
     kind: 'voucher',
     loginUrl: '',
@@ -106,7 +116,8 @@ export function CaptiveCredentialsDialog({ network, onClose }: { network: Networ
                 console.warn('Cloud captive save deferred/offline:', err);
               } finally {
                 setBusy(false);
-                toast.success('Network login saved');
+                toast.success('Stored!! Network login credentials saved');
+                if (onSaved) onSaved();
                 onClose();
               }
             }}

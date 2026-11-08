@@ -20,8 +20,16 @@ const PERMS: { key: keyof Device["perms"]; title: string; why: string; icon: Rea
 ];
 
 function openApk(url: string) {
-  if (url) window.open(url, "_blank", "noopener");
-  else toast("The download link isn't ready yet. Please check back soon.");
+  if (!url) {
+    toast.error("The download link isn't ready yet. Please check back soon.");
+    return;
+  }
+  toast.success("Opening APK download...");
+  try {
+    window.location.href = url;
+  } catch {
+    window.open(url, "_blank", "noopener");
+  }
 }
 
 export function DownloadGate() {

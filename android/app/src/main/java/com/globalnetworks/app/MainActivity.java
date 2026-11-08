@@ -37,6 +37,16 @@ public class MainActivity extends BridgeActivity {
             settings.setDatabaseEnabled(true);
             settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
+            webView.setDownloadListener((url, userAgent, contentDisposition, mimetype, contentLength) -> {
+                try {
+                    android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url));
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                } catch (Exception e) {
+                    android.util.Log.e("MainActivity", "Download listener error", e);
+                }
+            });
+
             getBridge().setWebViewClient(new AppBridgeWebViewClient(getBridge()));
         }
 
