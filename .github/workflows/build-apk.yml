@@ -12,7 +12,7 @@ jobs:
   android:
     runs-on: ubuntu-latest
     env:
-      CAPACITOR_APP_URL: ${{ vars.CAPACITOR_APP_URL }}
+      CAPACITOR_APP_URL: ${{ vars.CAPACITOR_APP_URL || 'https://signal-saver-roaming-pass.lovable.app' }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -25,10 +25,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - uses: android-actions/setup-android@v3
-      - name: Require published app URL
-        run: |
-          test -n "$CAPACITOR_APP_URL" || { echo 'Set repository variable CAPACITOR_APP_URL to your published HTTPS app URL.'; exit 1; }
       - run: bun install --frozen-lockfile
       - run: node node_modules/@capacitor/cli/bin/capacitor sync android
       - name: Compile installable debug APK
