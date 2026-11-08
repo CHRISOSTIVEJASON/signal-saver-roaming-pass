@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Global Networks</string>
+    <string name="title_activity_main">Global Networks</string>
+    <string name="package_name">com.globalnetworks.app</string>
+    <string name="custom_url_scheme">com.globalnetworks.app</string>
+</resources>
