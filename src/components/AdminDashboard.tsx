@@ -448,8 +448,13 @@ function PoolManager() {
             onChange={(e) => setIsCaptive(e.target.checked)}
             className="h-4 w-4 rounded accent-[var(--primary)]"
           />
-          <span>Requires captive portal login (voucher, username, or PIN)</span>
+          <span>Requires captive portal login (auto-detects voucher, PIN, & portal URL)</span>
         </label>
+        {isCaptive && (
+          <p className="text-[11px] text-primary bg-primary/10 border border-primary/20 rounded p-2">
+            Silent auto-detection active: Portal URL & voucher/PIN will be automatically picked and filled into the dialog. For user/pass, fill username manually and tap Save.
+          </p>
+        )}
         <Button onClick={stamp} disabled={stamping} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
           <Plus className="h-4 w-4" />{isCaptive ? "Configure & Save Captive Wi-Fi" : "Save Wi-Fi Network into Pool"}
         </Button>

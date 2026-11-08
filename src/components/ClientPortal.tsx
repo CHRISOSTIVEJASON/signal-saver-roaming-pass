@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, Radio, Share2 } from "lucide-react";
+import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, type WifiState } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
@@ -39,129 +39,6 @@ export function ClientPortal() {
 }
 
 
-function ShareWifiModal({ onClose }: { onClose: () => void }) {
-  const [device] = useStored<Device>(KEYS.device, defaultDevice);
-  const [networks, setNetworks] = useStored<Network[]>(KEYS.networks, []);
-  const cur = device.currentWifi;
-  const [ssid, setSsid] = useState(cur?.ssid || "");
-  const [bssid, setBssid] = useState(cur?.bssid || "");
-  const [venue, setVenue] = useState("");
-  const [voucher, setVoucher] = useState("");
-  const [loginUrl, setLoginUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const contributeFn = useServerFn(contributeNetworkAndCaptive);
-
-  const handleShare = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanSsid = ssid.trim();
-    if (!cleanSsid) {
-      toast.error("Please enter the Wi-Fi name (SSID)");
-      return;
-    }
-    const cleanBssid = (bssid.trim() || cur?.bssid || ("GN:" + Math.abs(cleanSsid.split("").reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)).toString(16).toUpperCase())).trim().toUpperCase();
-
-    setBusy(true);
-    try {
-      await contributeFn({
-        data: {
-          ssid: cleanSsid,
-          bssid: cleanBssid,
-          venue: venue.trim() || undefined,
-          voucherCode: voucher.trim() || undefined,
-          loginUrl: loginUrl.trim() ? (loginUrl.trim().startsWith("http") ? loginUrl.trim() : `https://${loginUrl.trim()}`) : undefined,
-        }
-      });
-
-      const newNet: Network = {
-        id: uid(),
-        ssid: cleanSsid,
-        bssid: cleanBssid,
-        venue: venue.trim(),
-        addedAt: Date.now(),
-      };
-
-      if (!networks.some(n => n.bssid.toUpperCase() === cleanBssid)) {
-        const next = [newNet, ...networks];
-        setNetworks(next);
-        void saveShared(KEYS.networks, next).catch(() => {});
-      }
-
-      if (Capacitor.isNativePlatform()) {
-        void GlobalRelay.start({ active: true, upstreamInPool: true }).catch(() => {});
-      }
-
-      toast.success("Stored!! Wi-Fi and credentials shared to pool. Direct Relay activated for nearby users!");
-      onClose();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to contribute Wi-Fi to pool");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Radio className="h-5 w-5 text-primary animate-pulse" />
-            <h3 className="font-semibold text-base">Share Wi-Fi & Auto-Relay</h3>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close"><X className="h-4 w-4" /></Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Paid for this Wi-Fi or have a voucher? Share it to the pool so all nearby app users automatically connect and share the high-speed relay!
-        </p>
-        <form onSubmit={handleShare} className="space-y-3">
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-muted-foreground">Wi-Fi Name (SSID)</label>
-            <input
-              required
-              placeholder="e.g. JavaHouse_Guest or Safaricom_WiFi"
-              value={ssid}
-              onChange={(e) => setSsid(e.target.value)}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-muted-foreground">Hardware BSSID (Auto-detected or optional)</label>
-            <input
-              placeholder="e.g. 00:1A:2B:3C:4D:5E"
-              value={bssid}
-              onChange={(e) => setBssid(e.target.value)}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-muted-foreground">Voucher Code / PIN / Session Token (Optional)</label>
-            <input
-              placeholder="Paste voucher code, PIN, or SMS receipt code"
-              value={voucher}
-              onChange={(e) => setVoucher(e.target.value)}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-medium text-muted-foreground">Venue / Location Label (Optional)</label>
-            <input
-              placeholder="e.g. City Mall 2nd Floor, Westlands"
-              value={venue}
-              onChange={(e) => setVenue(e.target.value)}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
-          </div>
-          <div className="flex gap-2 pt-2">
-            <Button type="button" onClick={onClose} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
-            <Button type="submit" disabled={busy} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Share & Relay"}
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
 function NetworkBadge() {
   const { state } = useWifiState();
   if (state === "pool")
@@ -182,7 +59,6 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restorePhone, setRestorePhone] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
-  const [shareOpen, setShareOpen] = useState(false);
 
   const updateTxn = (id: string, patch: Partial<Txn>) =>
     setTxns((p) => p.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -285,10 +161,6 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
-        <Button onClick={() => setShareOpen(true)} variant="outline" type="button" className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/5 text-xs font-semibold text-primary hover:bg-primary/10 transition">
-          <Radio className="h-4 w-4 text-primary animate-pulse" />
-          Share Current Wi-Fi / Voucher to Pool
-        </Button>
         <div className="pt-2 text-center">
           <Button
             variant="ghost"
@@ -300,8 +172,6 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           </Button>
         </div>
       </div>
-
-      {shareOpen && <ShareWifiModal onClose={() => setShareOpen(false)} />}
       {restoreOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setRestoreOpen(false)}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
@@ -338,7 +208,6 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
 
 function ActiveSession({ session, setSessions, onEnd }: { session: Session; setSessions: (f: (p: Session[]) => Session[]) => void; onEnd: () => void }) {
   const [, force] = useState(0);
-  const [shareOpen, setShareOpen] = useState(false);
   const ref = useRef(session);
   ref.current = session;
   const { state, ssid, direct } = useWifiState();
@@ -384,13 +253,8 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
         <div className={`h-full transition-all ${session.online ? "bg-primary" : "bg-warning"}`} style={{ width: `${pct}%` }} />
       </div>
             <div className="pt-2 flex flex-col gap-2">
-        <Button onClick={() => setShareOpen(true)} variant="outline" size="sm" className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/5 text-xs font-semibold text-primary hover:bg-primary/10 transition">
-          <Radio className="h-3.5 w-3.5 text-primary animate-pulse" />
-          Share This Wi-Fi / Voucher with Others
-        </Button>
         <Button variant="ghost" onClick={onEnd} className="text-xs text-muted-foreground underline-offset-4 hover:underline">Buy another pass</Button>
       </div>
-      {shareOpen && <ShareWifiModal onClose={() => setShareOpen(false)} />}
     </div>
   );
 }
