@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, type WifiState } from "@/lib/rules";
-import { KEYS, defaultDevice, read, readConfig, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn } from "@/lib/store";
+import { KEYS, defaultDevice, read, useStored, type Device, type Network, type Session } from "@/lib/store";
 import { useServerFn } from "@tanstack/react-start";
 import { startCloudPayment, confirmCloudPayment, heartbeatSession } from "@/lib/cloud.functions";
 import { relayProvidesConnection } from "@/lib/relay";
@@ -25,13 +25,14 @@ function useWifiState() {
 
 export function ClientPortal() {
   const [activeId, setActiveId] = useStored<string | null>(KEYS.active, null);
-  const [sessions, setSessions] = useStored<Session[]>(KEYS.sessions, []);
+  const [sessions] = useStored<Session[]>(KEYS.sessions, []);
+  const [buying, setBuying] = useState(false);
   const identity = useCloudIdentity();
   const session = sessions.find((s) => s.id === activeId && s.remainingMs > 0) ?? sessions.find((s) => s.remainingMs > 0);
   if (!identity.signedIn) return <AccountPanel />;
 
-  if (session) return <ActiveSession session={session} setSessions={setSessions} onEnd={() => setActiveId(null)} />;
-  return <Purchase onActivated={(s) => { setActiveId(s.id); }} />;
+  if (session && !buying) return <ActiveSession session={session} onEnd={() => setBuying(true)} />;
+  return <Purchase onActivated={(s) => { setActiveId(s.id); setBuying(false); }} />;
 }
 
 function NetworkBadge() {
@@ -45,7 +46,6 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   const [passId, setPassId] = useState<string>("p30");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
   const pass = getPass(passId);
 
   const startPayment = useServerFn(startCloudPayment);
@@ -72,8 +72,8 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
       <div className="flex justify-center"><NetworkBadge /></div>
       <div className="grid grid-cols-2 gap-3">
         {PASSES.map((p) => (
-          <Button key={p.id} onClick={() => setPassId(p.id)}
-            className={`relative rounded-xl border p-3 text-left transition ${passId === p.id ? "border-primary bg-primary/10 shadow-[0_0_24px_-6px_var(--primary)]" : "border-border bg-secondary/40 hover:border-accent/50"}`}>
+          <Button variant="outline" disabled={Boolean(busy)} key={p.id} onClick={() => setPassId(p.id)}
+            className={`relative flex h-24 flex-col items-start gap-1 whitespace-normal rounded-lg border p-3 text-left transition ${passId === p.id ? "border-primary bg-primary/10 shadow-[0_0_24px_-6px_var(--primary)]" : "border-border bg-secondary/40 hover:border-accent/50"}`}>
             {p.popular && <span className="absolute -top-2.5 right-2 rounded-full bg-accent px-2 py-0.5 text-[10px] font-bold uppercase text-accent-foreground">Best Value</span>}
             <div className="font-mono text-2xl font-bold"><span className="text-xs font-normal text-muted-foreground">KES </span>{p.amount}</div>
             <div className="text-sm">{p.label}</div>
@@ -96,7 +96,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   );
 }
 
-function ActiveSession({ session, setSessions, onEnd }: { session: Session; setSessions: (f: (p: Session[]) => Session[]) => void; onEnd: () => void }) {
+function ActiveSession({ session, onEnd }: { session: Session; onEnd: () => void }) {
   const [, force] = useState(0);
   const ref = useRef(session);
   ref.current = session;
