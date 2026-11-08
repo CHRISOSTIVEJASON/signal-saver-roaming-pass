@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database } from "lucide-react";
 import { toast } from "sonner";
 import { APP_VERSION, changePasscode, formatClock, getPass, tick } from "@/lib/rules";
+import { Button } from "./ui/button";
+import type { MeshLink } from "@/lib/relay";
 import { useConfig, useDevice } from "@/components/Gates";
 import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn } from "@/lib/store";
 
@@ -34,9 +36,9 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
           <div className="text-xs uppercase tracking-widest text-accent">Admin Console</div>
           <h2 className="text-lg font-bold">Dashboard</h2>
         </div>
-        <button onClick={onExit} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-secondary">
+        <Button onClick={onExit} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-secondary">
           <LogOut className="h-3.5 w-3.5" /> Exit
-        </button>
+        </Button>
       </div>
 
       <div className="grid grid-cols-4 gap-2">
@@ -48,10 +50,10 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
 
       <div role="tablist" className="sticky top-0 z-10 grid grid-cols-4 gap-1 rounded-xl bg-background/90 p-1 backdrop-blur">
         {tabs.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
+          <Button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
             className={`flex flex-col items-center gap-0.5 rounded-lg px-1 py-2 text-[11px] font-medium leading-tight sm:flex-row sm:justify-center sm:gap-1.5 sm:text-sm ${tab === t.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary"}`}>
             {t.icon}<span className="text-center">{t.label}</span>
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -76,7 +78,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
             ])} />
         </Panel>
       </>)}
-      {tab === "set" && (<><AppSettingsCard /><PasscodeCard /></>)}
+      {tab === "set" && (<><AppSettingsCard /></>)}
     </div>
   );
 }
@@ -131,9 +133,9 @@ function Secret({ value, onChange, placeholder }: { value: string; onChange: (v:
   return (
     <div className="relative">
       <input type={show ? "text" : "password"} value={value} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} className={inputCls + " pr-10"} autoComplete="off" />
-      <button type="button" onClick={() => setShow(!show)} className="absolute right-2 top-2.5 text-muted-foreground" aria-label="Toggle visibility">
+      <Button type="button" onClick={() => setShow(!show)} className="absolute right-2 top-2.5 text-muted-foreground" aria-label="Toggle visibility">
         {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -144,7 +146,7 @@ function PayHeroCard() {
   useEffect(() => setC(saved), [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k: keyof PayConfig) => (v: string | boolean) => setC({ ...c, [k]: v });
   const save = () => {
-    if (c.live && (!c.channelId || !(c.apiToken || (c.username && c.password))))
+    if (c.live && !saved.live && (!c.channelId || !(c.apiToken || (c.username && c.password))))
       { toast.error("Live mode needs a Channel ID and either an API token or username + password"); return; }
     setSaved(c); toast.success("PayHero settings saved");
   };
@@ -153,10 +155,10 @@ function PayHeroCard() {
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-1 rounded-lg bg-background p-1 text-sm">
           {[false, true].map((l) => (
-            <button key={String(l)} onClick={() => set("live")(l)}
+            <Button key={String(l)} onClick={() => set("live")(l)}
               className={`rounded-md py-2 font-medium ${c.live === l ? (l ? "bg-primary text-primary-foreground" : "bg-secondary") : "text-muted-foreground"}`}>
               {l ? "Live PayHero STK Push" : "Demo Simulation Mode"}
-            </button>
+            </Button>
           ))}
         </div>
         <Field label="API Key / Basic Auth Token"><Secret value={c.apiToken} onChange={set("apiToken")} placeholder="Basic xxxxx (optional if username/password set)" /></Field>
@@ -165,7 +167,7 @@ function PayHeroCard() {
           <Field label="Password"><Secret value={c.password} onChange={set("password")} /></Field>
         </div>
         <Field label="Channel ID"><input className={inputCls} inputMode="numeric" value={c.channelId} onChange={(e) => set("channelId")(e.target.value)} /></Field>
-        <button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save Configuration</button>
+        <Button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save Configuration</Button>
       </div>
     </Panel>
   );
@@ -191,15 +193,15 @@ function PasscodeCard() {
       {step === "idle" && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">Change the passcode used to open this dashboard. A security code is required.</p>
-          <button onClick={() => setStep("security")} className="h-10 w-full rounded-lg border border-border text-sm font-medium hover:bg-secondary">Change Passcode</button>
+          <Button onClick={() => setStep("security")} className="h-10 w-full rounded-lg border border-border text-sm font-medium hover:bg-secondary">Change Passcode</Button>
         </div>
       )}
       {step === "security" && (
         <div className="space-y-3">
           <Field label="Enter Security Code"><Secret value={sec} onChange={setSec} /></Field>
           <div className="flex gap-2">
-            <button onClick={() => { setStep("idle"); setSec(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</button>
-            <button onClick={verify} className="h-10 flex-1 rounded-lg bg-accent text-sm font-semibold text-accent-foreground">Verify</button>
+            <Button onClick={() => { setStep("idle"); setSec(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
+            <Button onClick={verify} className="h-10 flex-1 rounded-lg bg-accent text-sm font-semibold text-accent-foreground">Verify</Button>
           </div>
         </div>
       )}
@@ -207,8 +209,8 @@ function PasscodeCard() {
         <div className="space-y-3">
           <Field label="New Master Passcode"><Secret value={pass} onChange={setPass} /></Field>
           <div className="flex gap-2">
-            <button onClick={() => { setStep("idle"); setSec(""); setPass(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</button>
-            <button onClick={save} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">Save Passcode</button>
+            <Button onClick={() => { setStep("idle"); setSec(""); setPass(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
+            <Button onClick={save} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">Save Passcode</Button>
           </div>
         </div>
       )}
@@ -234,7 +236,7 @@ function AppSettingsCard() {
           Require users to update
           <input type="checkbox" checked={c.updateRequired} onChange={(e) => setC({ ...c, updateRequired: e.target.checked })} className="h-5 w-5 accent-[var(--primary)]" />
         </label>
-        <button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save App Settings</button>
+        <Button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save App Settings</Button>
       </div>
     </Panel>
   );
@@ -257,9 +259,9 @@ function PoolManager() {
         <div className="text-xs text-muted-foreground">Currently connected</div>
         <div className="font-medium">{cur ? <>{cur.ssid} <span className="font-mono text-xs text-muted-foreground">{cur.bssid}</span></> : "Not connected to Wi-Fi"}</div>
         <input className={inputCls} placeholder="Venue label (optional), e.g. Westlands Mall" value={venue} onChange={(e) => setVenue(e.target.value)} />
-        <button onClick={stamp} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
+        <Button onClick={stamp} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
           <Plus className="h-4 w-4" />Stamp Current Network
-        </button>
+        </Button>
       </div>
       {networks.length === 0 ? <p className="py-4 text-center text-sm text-muted-foreground">No networks stamped yet.</p> : (
         <ul className="space-y-2">
@@ -269,8 +271,8 @@ function PoolManager() {
                 <div className="truncate text-sm font-medium">{n.ssid}</div>
                 <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
               </div>
-              <button onClick={() => { setNetworks((p) => p.filter((x) => x.id !== n.id)); toast("Removed from pool"); }}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive px-2 py-1.5 text-xs font-medium text-destructive-foreground"><Trash2 className="h-3 w-3" />Remove from Pool</button>
+              <Button onClick={() => { setNetworks((p) => p.filter((x) => x.id !== n.id)); toast("Removed from pool"); }}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive px-2 py-1.5 text-xs font-medium text-destructive-foreground"><Trash2 className="h-3 w-3" />Remove from Pool</Button>
             </li>
           ))}
         </ul>
@@ -281,11 +283,14 @@ function PoolManager() {
 
 function RelayMonitor() {
   const [log] = useStored<RelayLog>(KEYS.relay, emptyRelay);
+  const [links] = useStored<MeshLink[]>(KEYS.mesh, []);
+  const activeLinks = links.filter((link) => link.connected && Date.now() - link.updatedAt < 30_000);
   const peers = new Set(log.events.map((e) => e.peer)).size;
   return (
     <Panel title="Mesh Swarm & Relay Activity" icon={<Radio className="h-4 w-4" />}
       action={<span className="text-[10px] uppercase tracking-wider text-muted-foreground">Simulated</span>}>
-      <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+      <Table head={["Group Owner / Relay", "Clients", "Network", "Transport", "Source"]} empty="No active Wi-Fi Direct links." rows={activeLinks.map((link) => [link.groupOwner, link.clients.join(", ") || "No clients", link.networkName, link.transportReady ? "Ready" : "Local link only", link.source])} />
+      <div className="mb-3 mt-3 grid grid-cols-3 gap-2 text-center">
         <div className="rounded-lg bg-background p-2"><div className="font-mono font-bold">{(log.assistedKb / 1024).toFixed(1)} MB</div><div className="text-[11px] text-muted-foreground">Peer-assist sent</div></div>
         <div className="rounded-lg bg-background p-2"><div className="font-mono font-bold">{(log.receivedKb / 1024).toFixed(1)} MB</div><div className="text-[11px] text-muted-foreground">Reciprocal received</div></div>
         <div className="rounded-lg bg-background p-2"><div className="font-mono font-bold">{peers}</div><div className="text-[11px] text-muted-foreground">Peers seen</div></div>

@@ -1,6 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { BatteryCharging, Download, FlaskConical, RefreshCw, Settings, ShieldAlert, Share2, Wifi, X } from "lucide-react";
 import { toast } from "sonner";
+import { Capacitor } from "@capacitor/core";
+import { GlobalRelay } from "@/lib/native-relay";
+import { Button } from "./ui/button";
 import { APP_VERSION } from "@/lib/rules";
 import { KEYS, defaultConfig, defaultDevice, useStored, type Device, type Network, type PayConfig, type Perm } from "@/lib/store";
 
@@ -32,10 +35,10 @@ export function DownloadGate() {
         <h2 className="text-xl font-bold">Download Global Networks Android App</h2>
         <p className="mt-2 text-sm text-muted-foreground">Buy a pass with M-Pesa and get connected automatically at any Global Networks hotspot.</p>
       </div>
-      <button onClick={() => openApk(cfg.apkUrl)}
+      <Button onClick={() => openApk(cfg.apkUrl)}
         className="flex h-14 w-full items-center justify-center gap-2 rounded-xl bg-primary text-base font-semibold text-primary-foreground shadow-[0_0_24px_-6px_var(--primary)] hover:brightness-110">
         <Download className="h-5 w-5" /> Download for Android
-      </button>
+      </Button>
       <ul className="space-y-1 text-left text-xs text-muted-foreground">
         <li>1. Tap download and open the file.</li>
         <li>2. If asked, allow installing from this source.</li>
@@ -54,7 +57,7 @@ export function UpdateGate() {
         <RefreshCw className="mx-auto h-10 w-10 text-accent" />
         <h2 className="text-lg font-bold">A new version is available</h2>
         <p className="text-sm text-muted-foreground">Version {cfg.latestVersion} is required to keep using Global Networks. You have {APP_VERSION}.</p>
-        <button onClick={() => openApk(cfg.apkUrl)} className="h-12 w-full rounded-xl bg-accent font-semibold text-accent-foreground hover:brightness-110">Update Now</button>
+        <Button onClick={() => openApk(cfg.apkUrl)} className="h-12 w-full rounded-xl bg-accent font-semibold text-accent-foreground hover:brightness-110">Update Now</Button>
       </div>
     </div>
   );
@@ -63,8 +66,13 @@ export function UpdateGate() {
 export function Onboarding() {
   const [device, setDevice] = useDevice();
   const [i, setI] = useState(0);
-  const p = PERMS[i] ?? PERMS[0]!;
-  const answer = (v: Perm) => {
+  const p = PERMS[i] ?? PERMS[0];
+  if (!p) return null;
+  const answer = async (v: Perm) => {
+    if (Capacitor.isNativePlatform() && v === "granted") {
+      const result = await GlobalRelay.requestAccess();
+      v = result.granted ? "granted" : "denied";
+    }
     const perms = { ...device.perms, [p.key]: v };
     const done = i === PERMS.length - 1;
     setDevice({ ...device, perms, onboarded: done || device.onboarded });
@@ -82,8 +90,8 @@ export function Onboarding() {
         <p className="text-sm text-muted-foreground">{p.why}</p>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <button onClick={() => answer("denied")} className="h-12 rounded-xl border border-border text-sm font-medium">Don't allow</button>
-        <button onClick={() => answer("granted")} className="h-12 rounded-xl bg-primary text-sm font-semibold text-primary-foreground">Allow</button>
+        <Button onClick={() => answer("denied")} className="h-12 rounded-xl border border-border text-sm font-medium">Don't allow</Button>
+        <Button onClick={() => answer("granted")} className="h-12 rounded-xl bg-primary text-sm font-semibold text-primary-foreground">Allow</Button>
       </div>
     </div>
   );
@@ -109,24 +117,24 @@ export function PermissionBlock() {
         ))}
       </ul>
       <div className="grid grid-cols-2 gap-2">
-        <button onClick={() => setSettings(true)} className="flex h-11 items-center justify-center gap-1.5 rounded-xl bg-primary text-sm font-semibold text-primary-foreground"><Settings className="h-4 w-4" />Open Settings</button>
-        <button onClick={recheck} className="flex h-11 items-center justify-center gap-1.5 rounded-xl border border-border text-sm font-medium"><RefreshCw className="h-4 w-4" />Re-check Permissions</button>
+        <Button onClick={() => { if (Capacitor.isNativePlatform()) void GlobalRelay.openSettings(); else setSettings(true); }} className="flex h-11 items-center justify-center gap-1.5 rounded-xl bg-primary text-sm font-semibold text-primary-foreground"><Settings className="h-4 w-4" />Open Settings</Button>
+        <Button onClick={recheck} className="flex h-11 items-center justify-center gap-1.5 rounded-xl border border-border text-sm font-medium"><RefreshCw className="h-4 w-4" />Re-check Permissions</Button>
       </div>
       {settings && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/80 p-4 backdrop-blur-sm sm:items-center" onClick={() => setSettings(false)}>
           <div className="w-full max-w-sm space-y-3 rounded-2xl border border-border bg-card p-5 text-left" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between"><h3 className="font-semibold">App permissions</h3><button onClick={() => setSettings(false)} aria-label="Close"><X className="h-4 w-4" /></button></div>
+            <div className="flex items-center justify-between"><h3 className="font-semibold">App permissions</h3><Button onClick={() => setSettings(false)} aria-label="Close"><X className="h-4 w-4" /></Button></div>
             {PERMS.map((p) => {
               const on = device.perms[p.key] === "granted";
               return (
-                <button key={p.key} onClick={() => setDevice({ ...device, perms: { ...device.perms, [p.key]: on ? "denied" : "granted" } })}
+                <Button key={p.key} onClick={() => setDevice({ ...device, perms: { ...device.perms, [p.key]: on ? "denied" : "granted" } })}
                   className="flex w-full items-center justify-between rounded-lg border border-border p-3 text-sm">
                   {p.title}
                   <span className={`relative h-6 w-11 rounded-full ${on ? "bg-primary" : "bg-muted"}`}><span className={`absolute top-0.5 h-5 w-5 rounded-full bg-background transition-all ${on ? "left-[22px]" : "left-0.5"}`} /></span>
-                </button>
+                </Button>
               );
             })}
-            <button onClick={() => setSettings(false)} className="h-10 w-full rounded-lg bg-secondary text-sm">Done</button>
+            <Button onClick={() => setSettings(false)} className="h-10 w-full rounded-lg bg-secondary text-sm">Done</Button>
           </div>
         </div>
       )}
@@ -146,15 +154,16 @@ export function TestControls() {
     { label: "Coffee Shop Free (other)", wifi: { ssid: "Coffee Shop Free", bssid: "02:00:00:00:00:99" } },
   ];
   const cur = device.currentWifi?.bssid ?? "none";
+  if (Capacitor.isNativePlatform()) return null;
   return (
     <>
-      <button onClick={() => setOpen(true)} aria-label="Test controls" className="fixed bottom-3 left-3 z-40 rounded-full border border-border bg-card p-2.5 text-muted-foreground shadow-lg hover:text-accent">
+      <Button onClick={() => setOpen(true)} aria-label="Test controls" className="fixed bottom-3 left-3 z-40 rounded-full border border-border bg-card p-2.5 text-muted-foreground shadow-lg hover:text-accent">
         <FlaskConical className="h-4 w-4" />
-      </button>
+      </Button>
       {open && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-background/70 p-3 backdrop-blur-sm sm:items-center" onClick={() => setOpen(false)}>
           <div className="w-full max-w-sm space-y-3 rounded-2xl border border-border bg-card p-4 text-sm" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between"><h3 className="font-semibold">Test controls (simulated phone)</h3><button onClick={() => setOpen(false)} aria-label="Close"><X className="h-4 w-4" /></button></div>
+            <div className="flex items-center justify-between"><h3 className="font-semibold">Test controls (simulated phone)</h3><Button onClick={() => setOpen(false)} aria-label="Close"><X className="h-4 w-4" /></Button></div>
             <label className="flex items-center justify-between rounded-lg border border-border p-3">
               App mode (opened in Android app)
               <input type="checkbox" checked={device.appMode} onChange={(e) => setDevice({ ...device, appMode: e.target.checked })} className="h-5 w-5 accent-[var(--primary)]" />
@@ -166,8 +175,8 @@ export function TestControls() {
                 {options.map((o) => <option key={o.label} value={o.wifi?.bssid ?? "none"}>{o.label}</option>)}
               </select>
             </div>
-            <button onClick={() => { setDevice({ ...device, onboarded: false, perms: defaultDevice.perms }); toast("Permissions reset — first launch again"); }}
-              className="h-10 w-full rounded-lg border border-border">Reset permissions / first launch</button>
+            <Button onClick={() => { setDevice({ ...device, onboarded: false, perms: defaultDevice.perms }); toast("Permissions reset — first launch again"); }}
+              className="h-10 w-full rounded-lg border border-border">Reset permissions / first launch</Button>
           </div>
         </div>
       )}
