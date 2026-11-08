@@ -227,7 +227,8 @@ export function CaptiveCredentialsDialog({
                     ssid: network.ssid,
                     bssid: network.bssid,
                     venue: network.venue,
-                    captiveConfig: toSave,
+                    voucherCode: toSave?.secret || undefined,
+                    loginUrl: toSave?.loginUrl || undefined,
                   }
                 });
               } catch (err) {

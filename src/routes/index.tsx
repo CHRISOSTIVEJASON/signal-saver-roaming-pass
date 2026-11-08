@@ -3,7 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import { verifyMasterPasscode } from "@/lib/cloud.functions";
 import { useServerFn } from "@tanstack/react-start";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { ClientPortal } from "@/components/ClientPortal";
