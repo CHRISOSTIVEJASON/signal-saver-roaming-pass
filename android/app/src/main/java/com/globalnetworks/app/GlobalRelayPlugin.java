@@ -33,6 +33,7 @@ public class GlobalRelayPlugin extends Plugin {
  private BroadcastReceiver receiver; private boolean started=false, upstream=false;
  private JSObject relay; private final String networkName="DIRECT-GLOBAL-NETWORKS";
  private final ExecutorService portalExecutor=Executors.newSingleThreadExecutor();
+
  @Override public void load(){
   manager=(WifiP2pManager)getContext().getSystemService(Context.WIFI_P2P_SERVICE);
   if(manager!=null)channel=manager.initialize(getContext(),Looper.getMainLooper(),null);
@@ -40,31 +41,45 @@ public class GlobalRelayPlugin extends Plugin {
   IntentFilter filter=new IntentFilter();filter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);filter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);
   if(Build.VERSION.SDK_INT>=33)getContext().registerReceiver(receiver,filter,Context.RECEIVER_NOT_EXPORTED);else getContext().registerReceiver(receiver,filter);
  }
+
  private boolean granted(){return getPermissionState("location")==PermissionState.GRANTED && (Build.VERSION.SDK_INT<33 || getPermissionState("nearby")==PermissionState.GRANTED);}
+
  @PluginMethod public void requestAccess(PluginCall call){
   if(granted()){accessResult(call);return;}
   requestPermissionForAliases(Build.VERSION.SDK_INT>=33?new String[]{"location","nearby"}:new String[]{"location"},call,"accessResult");
  }
+
  @PermissionCallback private void accessResult(PluginCall call){JSObject result=new JSObject();result.put("granted",granted());call.resolve(result);emit();}
+
  @PluginMethod public void openSettings(PluginCall call){getActivity().startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getContext().getPackageName())));call.resolve();}
+
  @PluginMethod public void getState(PluginCall call){if(granted())refreshGroup();call.resolve(state());}
+
  private JSObject state(){
   JSObject result=new JSObject();result.put("granted",granted());
   if(granted()){
    WifiManager wifi=(WifiManager)getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-   if(wifi!=null){android.net.wifi.WifiInfo info=wifi.getConnectionInfo();String ssid=info.getSSID(); if(ssid!=null&&!ssid.equals("<unknown ssid>")){result.put("ssid",ssid.replace("\"",""));result.put("bssid",info.getBSSID());}}
+   if(wifi!=null){android.net.wifi.WifiInfo info=wifi.getConnectionInfo();String ssid=info.getSSID(); if(ssid!=null&&!ssid.equals("<unknown ssid>")){result.put("ssid",ssid.replace(""",""));result.put("bssid",info.getBSSID());}}
   }
   if(relay!=null)result.put("relay",relay);return result;
  }
+
  private void emit(){notifyListeners("stateChanged",state());}
+
  private WifiP2pManager.ActionListener action(){return new WifiP2pManager.ActionListener(){public void onSuccess(){refreshGroup();}public void onFailure(int reason){JSObject error=new JSObject();error.put("code",reason);notifyListeners("relayError",error);}};}
+
  @PluginMethod public void start(PluginCall call){
   upstream=call.getBoolean("upstreamInPool",false);
   if(!granted()){call.reject("Nearby Wi-Fi and location access are required");return;}
   if(manager==null||channel==null){call.reject("Wi-Fi Direct is not supported");return;}
   if(started){refreshGroup();call.resolve();return;}
   started=true;
-  getContext().startForegroundService(new Intent(getContext(),RelayService.class));
+
+  Intent serviceIntent = new Intent(getContext(), RelayService.class);
+  serviceIntent.setAction(RelayService.ACTION_START_HOST);
+  if(Build.VERSION.SDK_INT>=26)getContext().startForegroundService(serviceIntent);
+  else getContext().startService(serviceIntent);
+
   Map<String,String> record=new HashMap<>();record.put("identity",networkName);record.put("uplink",String.valueOf(upstream));
   manager.addLocalService(channel,WifiP2pDnsSdServiceInfo.newInstance("GLOBAL-NETWORKS","_globalnetworks._tcp",record),action());
   manager.setDnsSdResponseListeners(channel,(instance,type,device)->{
@@ -75,6 +90,7 @@ public class GlobalRelayPlugin extends Plugin {
   if(upstream)manager.createGroup(channel,action());
   startAware();call.resolve();
  }
+
  private void startAware(){
   if(Build.VERSION.SDK_INT<26)return;
   WifiAwareManager aware=(WifiAwareManager)getContext().getSystemService(Context.WIFI_AWARE_SERVICE);
@@ -84,26 +100,47 @@ public class GlobalRelayPlugin extends Plugin {
     session.publish(new PublishConfig.Builder().setServiceName("global-networks").build(),new DiscoverySessionCallback(){@Override public void onPublishStarted(PublishDiscoverySession p){publication=p;}},new Handler(Looper.getMainLooper()));
   }},new Handler(Looper.getMainLooper()));
  }
+
  private void refreshGroup(){
   if(manager==null||channel==null||!granted())return;
   manager.requestGroupInfo(channel,group->{
-    JSObject link=new JSObject();JSArray clients=new JSArray();
-    if(group!=null){for(WifiP2pDevice client:group.getClientList())clients.put(client.deviceAddress);}
-    String owner=group!=null&&group.getOwner()!=null?group.getOwner().deviceAddress:"";
-    link.put("id",Settings.Secure.getString(getContext().getContentResolver(),Settings.Secure.ANDROID_ID));
-    link.put("groupOwner",owner);link.put("clients",clients);link.put("networkName",group==null?networkName:group.getNetworkName());
-    link.put("source","native");link.put("connected",group!=null);link.put("transportReady",false);link.put("upstreamInPool",upstream);
-    link.put("updatedAt",System.currentTimeMillis());link.put("sentBytes",0);link.put("receivedBytes",0);
-    // A local P2P group is not a verified internet forwarding transport. Never claim otherwise.
-    relay=link;emit();
+    manager.requestConnectionInfo(channel, info -> {
+      JSObject link=new JSObject();JSArray clients=new JSArray();
+      if(group!=null){for(WifiP2pDevice client:group.getClientList())clients.put(client.deviceAddress);}
+      String owner=group!=null&&group.getOwner()!=null?group.getOwner().deviceAddress:"";
+      String ownerIp = (info != null && info.groupOwnerAddress != null) ? info.groupOwnerAddress.getHostAddress() : "192.168.49.1";
+      boolean groupConnected = group != null;
+      boolean isOwner = info != null && info.isGroupOwner;
+      boolean isFormed = info != null && info.groupFormed;
+      boolean transportReady = groupConnected && (upstream ? RelayService.isRouterRunning() : isFormed);
+
+      link.put("id",Settings.Secure.getString(getContext().getContentResolver(),Settings.Secure.ANDROID_ID));
+      link.put("groupOwner",owner);
+      link.put("ownerIp",ownerIp);
+      link.put("clients",clients);
+      link.put("networkName",group==null?networkName:group.getNetworkName());
+      link.put("source","native");
+      link.put("connected",groupConnected);
+      link.put("transportReady",transportReady);
+      link.put("upstreamInPool",upstream);
+      link.put("proxyHost",ownerIp);
+      link.put("proxyPort",RelayService.RELAY_PORT);
+      link.put("updatedAt",System.currentTimeMillis());
+      link.put("sentBytes",RelayService.getSentBytes());
+      link.put("receivedBytes",RelayService.getReceivedBytes());
+
+      relay=link;emit();
+    });
   });
  }
+
  private boolean matchesWifi(Network network, String bssid){
   ConnectivityManager connectivity=(ConnectivityManager)getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
   NetworkCapabilities caps=connectivity.getNetworkCapabilities(network);
   WifiManager wifi=(WifiManager)getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
   return caps!=null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && wifi!=null && bssid.equalsIgnoreCase(wifi.getConnectionInfo().getBSSID());
  }
+
  @PluginMethod public void submitCaptivePortal(PluginCall call){
   if(!granted()){call.reject("Wi-Fi access required");return;}
   final String bssid=call.getString("bssid", "");
@@ -136,7 +173,6 @@ public class GlobalRelayPlugin extends Plugin {
     try(OutputStream output=connection.getOutputStream()){output.write(bytes);}
     int status=connection.getResponseCode();
     if(status<200 || status>=400)throw new Exception();
-    // A portal's HTTP 200 or redirect is not proof of working internet.
     boolean validated=false;
     for(int attempt=0;attempt<5;attempt++){
      if(!matchesWifi(wifiNetwork,bssid))throw new Exception();
@@ -149,11 +185,19 @@ public class GlobalRelayPlugin extends Plugin {
    finally{if(connection!=null)connection.disconnect();}
   });
  }
+
  @PluginMethod public void stop(PluginCall call){shutdown();call.resolve();}
+
  private void shutdown(){
   if(manager!=null&&channel!=null&&granted()){manager.stopPeerDiscovery(channel,null);manager.clearLocalServices(channel,null);manager.clearServiceRequests(channel,null);manager.removeGroup(channel,null);}
   if(publication!=null){publication.close();publication=null;}if(awareSession!=null){awareSession.close();awareSession=null;}
-  getContext().stopService(new Intent(getContext(),RelayService.class));started=false;relay=null;
+  
+  Intent stopIntent = new Intent(getContext(), RelayService.class);
+  stopIntent.setAction(RelayService.ACTION_STOP);
+  getContext().startService(stopIntent);
+
+  started=false;relay=null;
  }
+
  @Override protected void handleOnDestroy(){portalExecutor.shutdownNow();shutdown();if(receiver!=null)getContext().unregisterReceiver(receiver);if(channel!=null&&Build.VERSION.SDK_INT>=27)channel.close();}
 }
