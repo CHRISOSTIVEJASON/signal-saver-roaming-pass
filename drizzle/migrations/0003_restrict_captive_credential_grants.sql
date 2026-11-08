@@ -1,0 +1,2 @@
+REVOKE ALL ON public.gn_captive_credentials FROM anon;
+COMMENT ON TABLE public.gn_captive_credentials IS 'Admin-only shared HTTPS captive portal form configuration; anonymous access revoked explicitly. Paid customer access requires the owned activated live transaction and unexpired pass through an authenticated server function.';
