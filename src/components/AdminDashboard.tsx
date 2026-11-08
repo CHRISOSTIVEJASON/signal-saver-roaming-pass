@@ -285,28 +285,61 @@ function AppSettingsCard() {
 function PoolManager() {
   const [networks, setNetworks] = useStored<Network[]>(KEYS.networks, []);
   const [device] = useDevice();
+  const [manualSsid, setManualSsid] = useState("");
   const [venue, setVenue] = useState("");
   const [editing, setEditing] = useState<Network | null>(null);
   const [stamping, setStamping] = useState(false);
   const cur = device.currentWifi;
+
   const stamp = async () => {
-    if (!cur) { toast.error("This phone isn't connected to any Wi-Fi right now"); return; }
-    if (networks.some((n) => n.bssid.toUpperCase() === cur.bssid.toUpperCase())) { toast("This network is already in the pool"); return; }
-    const network = { id: uid(), ssid: cur.ssid, bssid: cur.bssid.toUpperCase(), venue: venue.trim(), addedAt: Date.now() };
+    const rawSsid = (cur?.ssid || manualSsid).trim();
+    if (!rawSsid) {
+      toast.error("Enter network SSID or connect phone to Wi-Fi to stamp");
+      return;
+    }
+    const rawBssid = (cur?.bssid || ("GN:" + Math.abs(rawSsid.split("").reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)).toString(16).toUpperCase())).trim().toUpperCase();
+    if (networks.some((n) => n.bssid.toUpperCase() === rawBssid)) {
+      toast("This network is already in the pool");
+      return;
+    }
+    const network = { id: uid(), ssid: rawSsid, bssid: rawBssid, venue: venue.trim(), addedAt: Date.now() };
     setStamping(true);
     try {
-      await saveShared(KEYS.networks, [network, ...networks]);
-      setVenue(""); toast.success(`${cur.ssid} stamped into the pool`); setEditing(network);
-    } catch { toast.error('Unable to stamp network'); } finally { setStamping(false); }
+      setNetworks([network, ...networks]);
+      void saveShared(KEYS.networks, [network, ...networks]).catch(() => {});
+      setVenue("");
+      setManualSsid("");
+      toast.success(`${rawSsid} stamped into the pool`);
+      setEditing(network);
+    } catch {
+      toast.error("Unable to stamp network");
+    } finally {
+      setStamping(false);
+    }
   };
+
   return (
     <Panel title="Wi-Fi Master Pool" icon={<Wifi className="h-4 w-4" />}>
       <div className="mb-4 space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
         <div className="text-xs text-muted-foreground">Currently connected</div>
-        <div className="font-medium">{cur ? <>{cur.ssid} <span className="font-mono text-xs text-muted-foreground">{cur.bssid}</span></> : "Not connected to Wi-Fi"}</div>
+        <div className="font-medium">
+          {cur ? (
+            <>{cur.ssid} <span className="font-mono text-xs text-muted-foreground">{cur.bssid}</span></>
+          ) : (
+            <div className="space-y-1">
+              <span className="text-warning text-xs">Wi-Fi auto-detect waiting or restricted:</span>
+              <input
+                className={inputCls}
+                placeholder="Type Wi-Fi name (SSID) to stamp, e.g. Safaricom_Hotspot"
+                value={manualSsid}
+                onChange={(e) => setManualSsid(e.target.value)}
+              />
+            </div>
+          )}
+        </div>
         <input className={inputCls} placeholder="Venue label (optional), e.g. Westlands Mall" value={venue} onChange={(e) => setVenue(e.target.value)} />
         <Button onClick={stamp} disabled={stamping} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground hover:brightness-110">
-          <Plus className="h-4 w-4" />Stamp Current Network
+          <Plus className="h-4 w-4" />Stamp Network into Pool
         </Button>
       </div>
       {networks.length === 0 ? <p className="py-4 text-center text-sm text-muted-foreground">No networks stamped yet.</p> : (

@@ -43,7 +43,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 @CapacitorPlugin(name="GlobalRelay", permissions={
-    @Permission(alias="location", strings={Manifest.permission.ACCESS_FINE_LOCATION}),
+    @Permission(alias="location", strings={Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}),
     @Permission(alias="nearby", strings={"android.permission.NEARBY_WIFI_DEVICES"})
 })
 public class GlobalRelayPlugin extends Plugin {
@@ -79,8 +79,6 @@ public class GlobalRelayPlugin extends Plugin {
         } else {
             getContext().registerReceiver(receiver, filter);
         }
-
-        registerAutoRelayCallback();
     }
 
     private void registerAutoRelayCallback() {
@@ -176,18 +174,63 @@ public class GlobalRelayPlugin extends Plugin {
 
     private JSObject state() {
         JSObject result = new JSObject();
-        result.put("granted", granted());
-        if (granted()) {
-            WifiManager wifi = (WifiManager) getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wifi != null) {
-                android.net.wifi.WifiInfo info = wifi.getConnectionInfo();
-                String ssid = info.getSSID();
-                if (ssid != null && !ssid.equals("<unknown ssid>")) {
-                    result.put("ssid", ssid.replace(String.valueOf('"'), ""));
-                    result.put("bssid", info.getBSSID());
-                }
+        boolean hasAccess = granted();
+        result.put("granted", hasAccess);
+
+        String ssid = null;
+        String bssid = null;
+
+        if (hasAccess) {
+            ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && Build.VERSION.SDK_INT >= 29) {
+                try {
+                    Network net = cm.getActiveNetwork();
+                    if (net != null) {
+                        NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                        if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                            android.net.TransportInfo transportInfo = caps.getTransportInfo();
+                            if (transportInfo instanceof android.net.wifi.WifiInfo) {
+                                android.net.wifi.WifiInfo winfo = (android.net.wifi.WifiInfo) transportInfo;
+                                String s = winfo.getSSID();
+                                if (s != null && !s.equals("<unknown ssid>")) {
+                                    ssid = s.replace(String.valueOf('"'), "");
+                                }
+                                String b = winfo.getBSSID();
+                                if (b != null && !b.equals("02:00:00:00:00:00")) {
+                                    bssid = b;
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (ssid == null || bssid == null) {
+                try {
+                    WifiManager wifi = (WifiManager) getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                    if (wifi != null) {
+                        android.net.wifi.WifiInfo info = wifi.getConnectionInfo();
+                        if (info != null) {
+                            String s = info.getSSID();
+                            if (s != null && !s.equals("<unknown ssid>")) {
+                                if (ssid == null) ssid = s.replace(String.valueOf('"'), "");
+                            }
+                            String b = info.getBSSID();
+                            if (b != null && !b.equals("02:00:00:00:00:00")) {
+                                if (bssid == null) bssid = b;
+                            }
+                        }
+                    }
+                } catch (Exception ignored) {}
             }
         }
+
+        if (ssid != null && bssid == null) {
+            bssid = "GN:" + Integer.toHexString(Math.abs(ssid.hashCode())).toUpperCase();
+        }
+
+        if (ssid != null) result.put("ssid", ssid);
+        if (bssid != null) result.put("bssid", bssid);
         if (relay != null) result.put("relay", relay);
         return result;
     }

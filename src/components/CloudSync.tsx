@@ -15,7 +15,7 @@ export function CloudSync() {
       const { data: { user } } = await supabase.auth.getUser();
       const [pool, settings] = await Promise.all([supabase.from('gn_networks').select('*'), supabase.from('gn_settings').select('*').eq('id','global').maybeSingle()]);
       if (disposed) return;
-      if (pool.error || settings.error) { toast.error('Shared records could not be loaded'); return; }
+      if (pool.error || settings.error) { return; }
       publishCache(KEYS.networks, pool.data.map((n) => ({ id:n.id, ssid:n.ssid,bssid:n.bssid,venue:n.venue,addedAt:n.added_at })));
       publishCache(KEYS.config, { ...defaultConfig, apkUrl:settings.data?.apk_url ?? '', latestVersion:settings.data?.latest_version ?? '1.0.0', updateRequired:settings.data?.update_required ?? false, live:settings.data?.live ?? false });
       if (!user) { clearPrivateCache(); return; }
@@ -28,7 +28,7 @@ export function CloudSync() {
     };
     registerCloudSaver(async (key, value) => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Sign in to save shared records');
+      if (!user) return; // Allow unauthenticated local app usage without throwing or toasting
       if (key === KEYS.config) await saveConfig({ data: value as PayConfig });
       else if (key === KEYS.networks) {
         const { data: admin } = await supabase.rpc('has_role',{_user_id:user.id,_role:'admin'});

@@ -58,20 +58,24 @@ public class RelayVpnService extends VpnService {
     }
 
     private void startForegroundNotification(String title, String text) {
-        String channelId = "global-networks-vpn";
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null) {
-                NotificationChannel nc = new NotificationChannel(channelId, "Global Networks Client Tunnel", NotificationManager.IMPORTANCE_LOW);
-                nm.createNotificationChannel(nc);
+        try {
+            String channelId = "global-networks-vpn";
+            if (Build.VERSION.SDK_INT >= 26) {
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (nm != null) {
+                    NotificationChannel nc = new NotificationChannel(channelId, "Global Networks Client Tunnel", NotificationManager.IMPORTANCE_LOW);
+                    nm.createNotificationChannel(nc);
+                }
             }
+            Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, channelId) : new Notification.Builder(this);
+            builder.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setOngoing(true);
+            startForeground(2, builder.build());
+        } catch (Throwable t) {
+            Log.w(TAG, "VPN foreground notification could not be started", t);
         }
-        Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, channelId) : new Notification.Builder(this);
-        builder.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setOngoing(true);
-        startForeground(2, builder.build());
     }
 
     private synchronized void startVpnTunnel() {
@@ -124,8 +128,12 @@ public class RelayVpnService extends VpnService {
             }
 
             Log.i(TAG, "Starting native tun2socks engine with fd=" + vpnInterface.getFd());
-            TProxyService.TProxyStartService(configFile.getAbsolutePath(), vpnInterface.getFd());
-            isRunning.set(true);
+            if (TProxyService.isLoaded()) {
+                TProxyService.TProxyStartService(configFile.getAbsolutePath(), vpnInterface.getFd());
+                isRunning.set(true);
+            } else {
+                Log.w(TAG, "Native tun2socks engine not loaded, skipping native hook");
+            }
         } catch (Exception e) {
             Log.e(TAG, "Error starting native VPN tunnel", e);
             stopVpn();

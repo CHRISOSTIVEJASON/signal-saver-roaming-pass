@@ -3,6 +3,7 @@ package com.globalnetworks.app;
 import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
@@ -20,13 +21,12 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(GlobalRelayPlugin.class);
         super.onCreate(savedInstanceState);
-        checkAndRequestMandatoryPermissions();
-        AppUpdateChecker.checkForUpdates(this);
-    }
 
-    @Override
-    public void onStart() {
-        super.onStart();
+        // Prevent white flash while WebView loads dark theme
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().setBackgroundColor(Color.parseColor("#0c0e14"));
+        }
+
         checkAndRequestMandatoryPermissions();
         AppUpdateChecker.checkForUpdates(this);
     }
@@ -36,6 +36,9 @@ public class MainActivity extends BridgeActivity {
             List<String> needed = new ArrayList<>();
             if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 needed.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            }
+            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                needed.add(Manifest.permission.ACCESS_COARSE_LOCATION);
             }
             if (Build.VERSION.SDK_INT >= 33) {
                 if (checkSelfPermission("android.permission.NEARBY_WIFI_DEVICES") != PackageManager.PERMISSION_GRANTED) {

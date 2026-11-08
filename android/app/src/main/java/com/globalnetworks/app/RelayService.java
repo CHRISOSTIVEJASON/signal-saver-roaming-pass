@@ -77,20 +77,28 @@ public class RelayService extends Service {
     }
 
     private void startForegroundNotification(String title, String text) {
-        String channelId = "global-network-relay";
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-            if (nm != null) {
-                NotificationChannel nc = new NotificationChannel(channelId, "Global Networks connection", NotificationManager.IMPORTANCE_LOW);
-                nm.createNotificationChannel(nc);
+        try {
+            String channelId = "global-network-relay";
+            if (Build.VERSION.SDK_INT >= 26) {
+                NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                if (nm != null) {
+                    NotificationChannel nc = new NotificationChannel(channelId, "Global Networks connection", NotificationManager.IMPORTANCE_LOW);
+                    nm.createNotificationChannel(nc);
+                }
             }
+            Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, channelId) : new Notification.Builder(this);
+            builder.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                    .setContentTitle(title)
+                    .setContentText(text)
+                    .setOngoing(true);
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(1, builder.build(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+            } else {
+                startForeground(1, builder.build());
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Foreground service notification could not be started", t);
         }
-        Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, channelId) : new Notification.Builder(this);
-        builder.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setOngoing(true);
-        startForeground(1, builder.build());
     }
 
     private synchronized void startRouter() {

@@ -1,0 +1,10 @@
+{
+	"appId": "com.globalnetworks.app",
+	"appName": "Global Networks",
+	"webDir": "native-web",
+	"backgroundColor": "#0c0e14",
+	"android": {
+		"allowMixedContent": false,
+		"backgroundColor": "#0c0e14"
+	}
+}
