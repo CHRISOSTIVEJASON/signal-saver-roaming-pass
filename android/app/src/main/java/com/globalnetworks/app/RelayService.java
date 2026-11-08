@@ -16,12 +16,16 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,6 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class RelayService extends Service {
     public static final int RELAY_PORT = 8282;
+    public static final int DNS_RELAY_PORT = 8253;
     public static final String ACTION_START_HOST = "com.globalnetworks.app.START_HOST";
     public static final String ACTION_STOP = "com.globalnetworks.app.STOP";
 
@@ -37,6 +42,7 @@ public class RelayService extends Service {
     private static final AtomicLong totalReceivedBytes = new AtomicLong(0);
 
     private ServerSocket serverSocket;
+    private DatagramSocket dnsRelaySocket;
     private ExecutorService threadPool;
 
     public static boolean isRouterRunning() {
@@ -61,7 +67,7 @@ public class RelayService extends Service {
             return START_NOT_STICKY;
         }
 
-        startForegroundNotification("Global Networks Relay", "High-speed packet router active on port " + RELAY_PORT);
+        startForegroundNotification("Global Networks Relay", "High-speed packet & DNS router active on port " + RELAY_PORT);
         startRouter();
         return START_STICKY;
     }
@@ -88,6 +94,7 @@ public class RelayService extends Service {
         routerRunning.set(true);
         threadPool = Executors.newCachedThreadPool();
 
+        // 1. TCP Proxy Server (HTTP / HTTPS / SOCKS5)
         threadPool.execute(() -> {
             try {
                 serverSocket = new ServerSocket();
@@ -110,6 +117,86 @@ public class RelayService extends Service {
                 routerRunning.set(false);
             }
         });
+
+        // 2. High-speed DNS Forwarder on UDP DNS_RELAY_PORT
+        threadPool.execute(() -> {
+            try {
+                dnsRelaySocket = new DatagramSocket(null);
+                dnsRelaySocket.setReuseAddress(true);
+                dnsRelaySocket.bind(new InetSocketAddress("0.0.0.0", DNS_RELAY_PORT));
+
+                byte[] recvBuf = new byte[4096];
+                while (routerRunning.get() && !dnsRelaySocket.isClosed()) {
+                    try {
+                        DatagramPacket inPacket = new DatagramPacket(recvBuf, recvBuf.length);
+                        dnsRelaySocket.receive(inPacket);
+                        byte[] queryData = Arrays.copyOf(inPacket.getData(), inPacket.getLength());
+                        SocketAddress clientAddress = inPacket.getSocketAddress();
+
+                        threadPool.execute(() -> forwardDnsQuery(queryData, clientAddress));
+                    } catch (Exception e) {
+                        if (!routerRunning.get()) break;
+                    }
+                }
+            } catch (Exception e) {
+                // DNS socket failed
+            }
+        });
+    }
+
+    private void forwardDnsQuery(byte[] queryData, SocketAddress clientAddress) {
+        DatagramSocket upstreamSocket = null;
+        try {
+            upstreamSocket = new DatagramSocket();
+            upstreamSocket.setSoTimeout(4000);
+
+            Network upstreamNet = getActiveInternetNetwork();
+            if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
+                upstreamNet.bindSocket(upstreamSocket);
+            }
+
+            InetAddress dnsServer = InetAddress.getByName("8.8.8.8");
+            DatagramPacket outPacket = new DatagramPacket(queryData, queryData.length, dnsServer, 53);
+            upstreamSocket.send(outPacket);
+
+            byte[] respBuf = new byte[4096];
+            DatagramPacket inPacket = new DatagramPacket(respBuf, respBuf.length);
+            upstreamSocket.receive(inPacket);
+
+            DatagramPacket replyPacket = new DatagramPacket(
+                    inPacket.getData(), inPacket.getLength(), clientAddress
+            );
+            if (dnsRelaySocket != null && !dnsRelaySocket.isClosed()) {
+                dnsRelaySocket.send(replyPacket);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            if (upstreamSocket != null) {
+                try { upstreamSocket.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private Network getActiveInternetNetwork() {
+        if (Build.VERSION.SDK_INT < 23) return null;
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm == null) return null;
+
+        for (Network net : cm.getAllNetworks()) {
+            NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+            if (caps != null &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                return net;
+            }
+        }
+        for (Network net : cm.getAllNetworks()) {
+            NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+            if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                return net;
+            }
+        }
+        return null;
     }
 
     private void handleConnection(Socket client) {
@@ -280,32 +367,9 @@ public class RelayService extends Service {
         socket.setReceiveBufferSize(65536);
         socket.setSendBufferSize(65536);
 
-        Network upstreamNet = null;
-        if (Build.VERSION.SDK_INT >= 23) {
-            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            if (cm != null) {
-                for (Network net : cm.getAllNetworks()) {
-                    NetworkCapabilities caps = cm.getNetworkCapabilities(net);
-                    if (caps != null &&
-                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                        upstreamNet = net;
-                        break;
-                    }
-                }
-                if (upstreamNet == null) {
-                    for (Network net : cm.getAllNetworks()) {
-                        NetworkCapabilities caps = cm.getNetworkCapabilities(net);
-                        if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                            upstreamNet = net;
-                            break;
-                        }
-                    }
-                }
-                if (upstreamNet != null) {
-                    upstreamNet.bindSocket(socket);
-                }
-            }
+        Network upstreamNet = getActiveInternetNetwork();
+        if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
+            upstreamNet.bindSocket(socket);
         }
 
         InetAddress targetAddress;
@@ -354,6 +418,10 @@ public class RelayService extends Service {
         if (serverSocket != null) {
             try { serverSocket.close(); } catch (Exception ignored) {}
             serverSocket = null;
+        }
+        if (dnsRelaySocket != null) {
+            try { dnsRelaySocket.close(); } catch (Exception ignored) {}
+            dnsRelaySocket = null;
         }
         if (threadPool != null) {
             threadPool.shutdownNow();
