@@ -11,6 +11,7 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -18,6 +19,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -30,8 +32,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class RelayService extends Service {
+    private static final String TAG = "RelayService";
     public static final int RELAY_PORT = 8282;
     public static final int DNS_RELAY_PORT = 8253;
     public static final String ACTION_START_HOST = "com.globalnetworks.app.START_HOST";
@@ -67,7 +71,7 @@ public class RelayService extends Service {
             return START_NOT_STICKY;
         }
 
-        startForegroundNotification("Global Networks Relay", "High-speed packet & DNS router active on port " + RELAY_PORT);
+        startForegroundNotification("Global Networks Dual-Path Relay", "High-speed SOCKS5 TCP/UDP ASSOCIATE & DNS router active on port " + RELAY_PORT);
         startRouter();
         return START_STICKY;
     }
@@ -94,7 +98,7 @@ public class RelayService extends Service {
         routerRunning.set(true);
         threadPool = Executors.newCachedThreadPool();
 
-        // 1. TCP Proxy Server (HTTP / HTTPS / SOCKS5)
+        // 1. TCP Proxy Server (HTTP / HTTPS / SOCKS5 TCP & UDP ASSOCIATE)
         threadPool.execute(() -> {
             try {
                 serverSocket = new ServerSocket();
@@ -138,9 +142,7 @@ public class RelayService extends Service {
                         if (!routerRunning.get()) break;
                     }
                 }
-            } catch (Exception e) {
-                // DNS socket failed
-            }
+            } catch (Exception ignored) {}
         });
     }
 
@@ -309,13 +311,18 @@ public class RelayService extends Service {
         byte[] methods = new byte[nmethods];
         in.read(methods);
 
+        // Accept NO_AUTH (0x00)
         out.write(new byte[]{0x05, 0x00});
         out.flush();
 
         byte[] header = new byte[4];
-        in.read(header);
-        int cmd = header[1];
-        int atyp = header[3];
+        int hRead = in.read(header);
+        if (hRead < 4) {
+            client.close();
+            return;
+        }
+        int cmd = header[1] & 0xFF;
+        int atyp = header[3] & 0xFF;
 
         String targetHost;
         if (atyp == 0x01) {
@@ -341,6 +348,7 @@ public class RelayService extends Service {
         int targetPort = ((portBytes[0] & 0xFF) << 8) | (portBytes[1] & 0xFF);
 
         if (cmd == 0x01) {
+            // SOCKS5 TCP CONNECT
             try {
                 Socket upstreamSocket = createUpstreamSocket(targetHost, targetPort);
                 byte[] resp = new byte[]{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -353,10 +361,175 @@ public class RelayService extends Service {
                 out.flush();
                 client.close();
             }
+        } else if (cmd == 0x03) {
+            // SOCKS5 UDP ASSOCIATE (for voice/video calls, games, low-latency UDP streams)
+            handleUdpAssociate(client, in, out);
         } else {
+            // Command not supported
             out.write(new byte[]{0x05, 0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
             out.flush();
             client.close();
+        }
+    }
+
+    private void handleUdpAssociate(Socket clientTcp, BufferedInputStream in, OutputStream out) throws Exception {
+        DatagramSocket hostUdpSocket = null;
+        DatagramSocket upstreamUdpSocket = null;
+        try {
+            hostUdpSocket = new DatagramSocket(null);
+            hostUdpSocket.setReuseAddress(true);
+            hostUdpSocket.bind(new InetSocketAddress("0.0.0.0", 0));
+            int boundPort = hostUdpSocket.getLocalPort();
+
+            InetAddress localAddr = clientTcp.getLocalAddress();
+            byte[] ipBytes;
+            if (localAddr instanceof Inet4Address && !localAddr.isAnyLocalAddress()) {
+                ipBytes = localAddr.getAddress();
+            } else {
+                ipBytes = new byte[]{(byte) 192, (byte) 168, (byte) 49, (byte) 1};
+            }
+
+            // SOCKS5 UDP ASSOCIATE SUCCESS reply
+            byte[] reply = new byte[10];
+            reply[0] = 0x05;
+            reply[1] = 0x00;
+            reply[2] = 0x00;
+            reply[3] = 0x01;
+            System.arraycopy(ipBytes, 0, reply, 4, 4);
+            reply[8] = (byte) ((boundPort >> 8) & 0xFF);
+            reply[9] = (byte) (boundPort & 0xFF);
+            out.write(reply);
+            out.flush();
+
+            upstreamUdpSocket = new DatagramSocket();
+            Network upstreamNet = getActiveInternetNetwork();
+            if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
+                upstreamNet.bindSocket(upstreamUdpSocket);
+            }
+
+            final DatagramSocket finalHostUdp = hostUdpSocket;
+            final DatagramSocket finalUpstreamUdp = upstreamUdpSocket;
+            final AtomicBoolean associateActive = new AtomicBoolean(true);
+            final AtomicReference<SocketAddress> clientUdpEndpoint = new AtomicReference<>();
+
+            // Worker: Client -> Upstream
+            threadPool.execute(() -> {
+                byte[] buf = new byte[65535];
+                while (associateActive.get() && routerRunning.get() && !finalHostUdp.isClosed()) {
+                    try {
+                        DatagramPacket packet = new DatagramPacket(buf, buf.length);
+                        finalHostUdp.receive(packet);
+                        clientUdpEndpoint.set(packet.getSocketAddress());
+
+                        int len = packet.getLength();
+                        byte[] data = packet.getData();
+                        if (len <= 7 || data[0] != 0 || data[1] != 0) continue;
+                        if (data[2] != 0) continue; // Fragment not supported
+
+                        int atyp = data[3] & 0xFF;
+                        int offset = 4;
+                        InetAddress destAddr;
+                        if (atyp == 0x01) {
+                            if (len < offset + 4 + 2) continue;
+                            byte[] ipv4 = Arrays.copyOfRange(data, offset, offset + 4);
+                            destAddr = InetAddress.getByAddress(ipv4);
+                            offset += 4;
+                        } else if (atyp == 0x03) {
+                            int dLen = data[offset] & 0xFF;
+                            offset += 1;
+                            if (len < offset + dLen + 2) continue;
+                            String domain = new String(data, offset, dLen, StandardCharsets.UTF_8);
+                            offset += dLen;
+                            if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
+                                try {
+                                    InetAddress[] addrs = upstreamNet.getAllByName(domain);
+                                    destAddr = (addrs != null && addrs.length > 0) ? addrs[0] : InetAddress.getByName(domain);
+                                } catch (Exception e) {
+                                    destAddr = InetAddress.getByName(domain);
+                                }
+                            } else {
+                                destAddr = InetAddress.getByName(domain);
+                            }
+                        } else if (atyp == 0x04) {
+                            if (len < offset + 16 + 2) continue;
+                            byte[] ipv6 = Arrays.copyOfRange(data, offset, offset + 16);
+                            destAddr = InetAddress.getByAddress(ipv6);
+                            offset += 16;
+                        } else {
+                            continue;
+                        }
+
+                        int destPort = ((data[offset] & 0xFF) << 8) | (data[offset + 1] & 0xFF);
+                        offset += 2;
+
+                        int payloadLen = len - offset;
+                        if (payloadLen > 0) {
+                            DatagramPacket outPacket = new DatagramPacket(data, offset, payloadLen, destAddr, destPort);
+                            finalUpstreamUdp.send(outPacket);
+                            totalSentBytes.addAndGet(payloadLen);
+                        }
+                    } catch (Exception e) {
+                        if (!associateActive.get()) break;
+                    }
+                }
+            });
+
+            // Worker: Upstream -> Client
+            threadPool.execute(() -> {
+                byte[] buf = new byte[65535];
+                while (associateActive.get() && routerRunning.get() && !finalUpstreamUdp.isClosed()) {
+                    try {
+                        DatagramPacket packet = new DatagramPacket(buf, buf.length);
+                        finalUpstreamUdp.receive(packet);
+
+                        SocketAddress clientEp = clientUdpEndpoint.get();
+                        if (clientEp == null) continue;
+
+                        InetAddress remoteAddr = packet.getAddress();
+                        int remotePort = packet.getPort();
+                        byte[] payload = packet.getData();
+                        int payloadLen = packet.getLength();
+
+                        byte[] addrBytes = remoteAddr.getAddress();
+                        int atyp = (addrBytes.length == 16) ? 0x04 : 0x01;
+
+                        int headerLen = 4 + addrBytes.length + 2;
+                        byte[] responsePacket = new byte[headerLen + payloadLen];
+                        responsePacket[0] = 0x00;
+                        responsePacket[1] = 0x00;
+                        responsePacket[2] = 0x00;
+                        responsePacket[3] = (byte) atyp;
+                        System.arraycopy(addrBytes, 0, responsePacket, 4, addrBytes.length);
+                        int pOff = 4 + addrBytes.length;
+                        responsePacket[pOff] = (byte) ((remotePort >> 8) & 0xFF);
+                        responsePacket[pOff + 1] = (byte) (remotePort & 0xFF);
+                        System.arraycopy(payload, packet.getOffset(), responsePacket, headerLen, payloadLen);
+
+                        DatagramPacket replyPacket = new DatagramPacket(responsePacket, responsePacket.length, clientEp);
+                        finalHostUdp.send(replyPacket);
+                        totalReceivedBytes.addAndGet(payloadLen);
+                    } catch (Exception e) {
+                        if (!associateActive.get()) break;
+                    }
+                }
+            });
+
+            // Wait for TCP control connection to close per RFC 1928
+            byte[] dummy = new byte[128];
+            while (routerRunning.get()) {
+                int r = in.read(dummy);
+                if (r == -1) break;
+            }
+
+            associateActive.set(false);
+        } finally {
+            if (hostUdpSocket != null) {
+                try { hostUdpSocket.close(); } catch (Exception ignored) {}
+            }
+            if (upstreamUdpSocket != null) {
+                try { upstreamUdpSocket.close(); } catch (Exception ignored) {}
+            }
+            try { clientTcp.close(); } catch (Exception ignored) {}
         }
     }
 
@@ -388,29 +561,45 @@ public class RelayService extends Service {
         return socket;
     }
 
-    private void bridgeSockets(Socket clientSock, InputStream clientIn, Socket upstreamSock) throws Exception {
-        InputStream upstreamIn = upstreamSock.getInputStream();
-        OutputStream clientOut = clientSock.getOutputStream();
-        OutputStream upstreamOut = upstreamSock.getOutputStream();
+    private void bridgeSockets(Socket client, InputStream clientIn, Socket upstream) {
+        AtomicBoolean active = new AtomicBoolean(true);
 
-        threadPool.execute(() -> pipe(clientIn, upstreamOut, clientSock, upstreamSock, totalSentBytes));
-        threadPool.execute(() -> pipe(upstreamIn, clientOut, upstreamSock, clientSock, totalReceivedBytes));
+        threadPool.execute(() -> {
+            byte[] buf = new byte[32768];
+            try (OutputStream out = upstream.getOutputStream()) {
+                int read;
+                while (active.get() && (read = clientIn.read(buf)) != -1) {
+                    out.write(buf, 0, read);
+                    out.flush();
+                    totalSentBytes.addAndGet(read);
+                }
+            } catch (Exception ignored) {
+            } finally {
+                active.set(false);
+                closeSilently(client, upstream);
+            }
+        });
+
+        threadPool.execute(() -> {
+            byte[] buf = new byte[32768];
+            try (InputStream in = upstream.getInputStream(); OutputStream out = client.getOutputStream()) {
+                int read;
+                while (active.get() && (read = in.read(buf)) != -1) {
+                    out.write(buf, 0, read);
+                    out.flush();
+                    totalReceivedBytes.addAndGet(read);
+                }
+            } catch (Exception ignored) {
+            } finally {
+                active.set(false);
+                closeSilently(client, upstream);
+            }
+        });
     }
 
-    private void pipe(InputStream in, OutputStream out, Socket sIn, Socket sOut, AtomicLong counter) {
-        try {
-            byte[] buf = new byte[32768];
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                out.write(buf, 0, n);
-                out.flush();
-                counter.addAndGet(n);
-            }
-        } catch (Exception ignored) {
-        } finally {
-            try { sIn.close(); } catch (Exception ignored) {}
-            try { sOut.close(); } catch (Exception ignored) {}
-        }
+    private void closeSilently(Socket s1, Socket s2) {
+        try { s1.close(); } catch (Exception ignored) {}
+        try { s2.close(); } catch (Exception ignored) {}
     }
 
     private synchronized void stopRouter() {

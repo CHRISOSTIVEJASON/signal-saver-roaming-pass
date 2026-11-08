@@ -27,6 +27,18 @@ jobs:
           java-version: '21'
       - run: bun install --frozen-lockfile
       - run: node node_modules/@capacitor/cli/bin/capacitor sync android
+      - name: Setup native tun2socks engine (hev-socks5-tunnel JNI libraries)
+        run: |
+          mkdir -p android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p android/app/src/main/jniLibs/armeabi-v7a
+          mkdir -p android/app/src/main/jniLibs/x86
+          mkdir -p android/app/src/main/jniLibs/x86_64
+          curl -sSL -o android/app/src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so https://raw.githubusercontent.com/J1BON/ProxyTunnel/main/app/src/main/jniLibs/arm64-v8a/libhev-socks5-tunnel.so
+          curl -sSL -o android/app/src/main/jniLibs/armeabi-v7a/libhev-socks5-tunnel.so https://raw.githubusercontent.com/J1BON/ProxyTunnel/main/app/src/main/jniLibs/armeabi-v7a/libhev-socks5-tunnel.so
+          curl -sSL -o android/app/src/main/jniLibs/x86/libhev-socks5-tunnel.so https://raw.githubusercontent.com/J1BON/ProxyTunnel/main/app/src/main/jniLibs/x86/libhev-socks5-tunnel.so
+          curl -sSL -o android/app/src/main/jniLibs/x86_64/libhev-socks5-tunnel.so https://raw.githubusercontent.com/J1BON/ProxyTunnel/main/app/src/main/jniLibs/x86_64/libhev-socks5-tunnel.so
+          echo "Native JNI libraries installed:"
+          ls -l android/app/src/main/jniLibs/*
       - name: Compile installable debug APK
         working-directory: android
         run: |
@@ -46,6 +58,6 @@ jobs:
           name: Global Networks APK (Latest)
           body: |
             ### Global Networks Android APK
-            Automated zero-touch relay routing and client auto-tunneling build.
+            Native TUN engine (hev-socks5-tunnel / lwIP) + SOCKS5 UDP ASSOCIATE dual-path tunnel build.
             - Direct APK download link: [Download app-debug.apk](https://github.com/${{ github.repository }}/releases/download/latest-apk/app-debug.apk)
           files: android/app/build/outputs/apk/debug/app-debug.apk
