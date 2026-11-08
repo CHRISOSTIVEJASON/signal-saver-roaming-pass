@@ -25,6 +25,8 @@ export type Device = {
   personalSsids: string[];
   relay?: MeshLink | null;
   captive?: { bssid: string; ready: boolean; required: boolean } | null;
+  nearbyPoolDetected?: boolean;
+  nearbySsid?: string;
 };
 export const defaultDevice: Device = {
   appMode: false, onboarded: false,

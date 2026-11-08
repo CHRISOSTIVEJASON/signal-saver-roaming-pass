@@ -45,3 +45,20 @@ describe("roaming + updates", () => {
     expect(isUpdateRequired("1.0.0", "1.0.0", true)).toBe(false);
   });
 });
+
+import { shouldAlertNetwork, ALERT_COOLDOWN_MS } from "@/lib/rules";
+describe("background network alert cooldown", () => {
+  it("alerts on first detection", () => {
+    expect(shouldAlertNetwork(0, Date.now())).toBe(true);
+  });
+  it("suppresses repeated alerts within 20 minutes", () => {
+    const t0 = 1000000;
+    expect(shouldAlertNetwork(t0, t0 + 5 * 60 * 1000)).toBe(false);
+    expect(shouldAlertNetwork(t0, t0 + 19 * 60 * 1000)).toBe(false);
+  });
+  it("allows alert after 20 minutes have passed", () => {
+    const t0 = 1000000;
+    expect(shouldAlertNetwork(t0, t0 + ALERT_COOLDOWN_MS)).toBe(true);
+    expect(shouldAlertNetwork(t0, t0 + ALERT_COOLDOWN_MS + 1000)).toBe(true);
+  });
+});

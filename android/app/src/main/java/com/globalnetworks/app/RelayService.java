@@ -67,6 +67,7 @@ public class RelayService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_STOP.equals(action)) {
+            NetworkWatcher.getInstance(this).stop();
             stopRouter();
             stopForeground(true);
             stopSelf();
@@ -75,6 +76,7 @@ public class RelayService extends Service {
 
         startForegroundNotification("Global Networks Dual-Path Relay", "High-speed SOCKS5 TCP/UDP ASSOCIATE & DNS router active on port " + RELAY_PORT);
         startRouter();
+        NetworkWatcher.getInstance(this).start();
         return START_STICKY;
     }
 
@@ -644,6 +646,7 @@ public class RelayService extends Service {
 
     @Override
     public void onDestroy() {
+        NetworkWatcher.getInstance(this).stop();
         stopRouter();
         super.onDestroy();
     }

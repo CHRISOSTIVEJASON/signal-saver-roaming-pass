@@ -25,6 +25,9 @@ import android.os.PowerManager;
 import android.provider.Settings;
 
 import com.getcapacitor.JSObject;
+import com.getcapacitor.JSArray;
+import java.util.List;
+import java.util.ArrayList;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -258,6 +261,15 @@ public class GlobalRelayPlugin extends Plugin {
         if (ssid != null) result.put("ssid", ssid);
         if (bssid != null) result.put("bssid", bssid);
         if (relay != null) result.put("relay", relay);
+
+        try {
+            NetworkWatcher watcher = NetworkWatcher.getInstance(getContext());
+            result.put("nearbyPoolDetected", watcher.isNearbyPoolDetected());
+            if (watcher.getCurrentNearbySsid() != null) {
+                result.put("nearbySsid", watcher.getCurrentNearbySsid());
+            }
+        } catch (Throwable ignored) {}
+
         return result;
     }
 
@@ -566,5 +578,53 @@ public class GlobalRelayPlugin extends Plugin {
                 call.reject("Download failed: " + e.getMessage());
             }
         });
+    }
+
+    @PluginMethod
+    public void syncWatcherConfig(PluginCall call) {
+        try {
+            JSArray ssidsArray = call.getArray("poolSsids");
+            JSArray bssidsArray = call.getArray("poolBssids");
+            boolean hasActivePass = call.getBoolean("hasActivePass", false);
+
+            List<String> ssids = new ArrayList<>();
+            if (ssidsArray != null) {
+                for (int i = 0; i < ssidsArray.length(); i++) {
+                    try {
+                        String s = ssidsArray.getString(i);
+                        if (s != null) ssids.add(s);
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            List<String> bssids = new ArrayList<>();
+            if (bssidsArray != null) {
+                for (int i = 0; i < bssidsArray.length(); i++) {
+                    try {
+                        String b = bssidsArray.getString(i);
+                        if (b != null) bssids.add(b);
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            NetworkWatcher.getInstance(getContext()).syncConfig(ssids, bssids, hasActivePass);
+            JSObject res = new JSObject();
+            res.put("success", true);
+            call.resolve(res);
+        } catch (Throwable t) {
+            call.reject("Failed to sync watcher config: " + t.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void playBeepTone(PluginCall call) {
+        try {
+            NetworkWatcher.playUniqueThreeBeepTone();
+            JSObject res = new JSObject();
+            res.put("success", true);
+            call.resolve(res);
+        } catch (Throwable t) {
+            call.reject("Failed to play tone: " + t.getMessage());
+        }
     }
 }

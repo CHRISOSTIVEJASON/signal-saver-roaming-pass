@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin } from "lucide-react";
 import { toast } from "sonner";
-import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, type WifiState } from "@/lib/rules";
+import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
@@ -64,6 +64,42 @@ function LocationAlert() {
   );
 }
 
+const LAST_ALERT_KEY = "gn_last_network_alert";
+const COOLDOWN_MS = 20 * 60 * 1000;
+
+function playWebThreeBeepTone() {
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const times = [0, 0.85, 1.7];
+    times.forEach((startTime) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, ctx.currentTime + startTime);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + startTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + startTime);
+      osc.stop(ctx.currentTime + startTime + 0.35);
+    });
+  } catch (_) {}
+}
+
+export function triggerNetworkAlertTone() {
+  const last = parseInt(localStorage.getItem(LAST_ALERT_KEY) || "0", 10);
+  const now = Date.now();
+  if (!shouldAlertNetwork(last, now, ALERT_COOLDOWN_MS)) return;
+  localStorage.setItem(LAST_ALERT_KEY, String(now));
+  if (Capacitor.isNativePlatform()) {
+    void GlobalRelay.playBeepTone().catch(() => playWebThreeBeepTone());
+  } else {
+    playWebThreeBeepTone();
+  }
+}
+
 export function ClientPortal() {
   const [activeId, setActiveId] = useStored<string | null>(KEYS.active, null);
   const [sessions, setSessions] = useStored<Session[]>(KEYS.sessions, []);
@@ -76,9 +112,12 @@ export function ClientPortal() {
 
 
 function NetworkBadge() {
-  const { state } = useWifiState();
+  const { state, ssid } = useWifiState();
+  const [device] = useStored<Device>(KEYS.device, defaultDevice);
   if (state === "pool")
-    return <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><span className="h-2 w-2 animate-pulse rounded-full bg-primary" />Network Available</span>;
+    return <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><span className="h-2 w-2 animate-pulse rounded-full bg-primary" />Network Connected • {ssid || "Pool"}</span>;
+  if (device.nearbyPoolDetected)
+    return <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><span className="h-2 w-2 animate-pulse rounded-full bg-primary" />Sensed Nearby • {device.nearbySsid || "Pool"}</span>;
   return <span className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground"><Search className="h-3.5 w-3.5" />Searching for network…</span>;
 }
 
@@ -89,6 +128,17 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
   const pass = getPass(passId);
+
+  const { state, ssid, direct } = useWifiState();
+  const [device] = useStored<Device>(KEYS.device, defaultDevice);
+  const isNetworkAvailable = state === "pool" || direct || Boolean(device.nearbyPoolDetected);
+  const detectedName = ssid || device.nearbySsid || "Roaming Pool";
+
+  useEffect(() => {
+    if (isNetworkAvailable) {
+      triggerNetworkAlertTone();
+    }
+  }, [isNetworkAvailable]);
 
   const startPayment = useServerFn(startCloudPayment);
   const confirmPayment = useServerFn(confirmCloudPayment);
@@ -191,6 +241,17 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
     <div className="space-y-4">
       <div className="flex flex-col items-center justify-center gap-2">
         <NetworkBadge />
+        {isNetworkAvailable && (
+          <div className="w-full flex items-center gap-2.5 rounded-xl border border-primary/40 bg-primary/10 p-3 text-xs text-primary shadow-sm animate-pulse">
+            <Zap className="h-4 w-4 shrink-0 text-primary" />
+            <div className="text-left leading-tight">
+              <span className="font-semibold block text-xs">Network available, kindly consider paying.</span>
+              <span className="text-[11px] text-muted-foreground">
+                Sensed {detectedName} in range. Choose a pass below to start high-speed roaming.
+              </span>
+            </div>
+          </div>
+        )}
         {cfg.live ? (
           <span className="inline-flex items-center gap-1.5 text-xs text-primary font-medium">
             <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
@@ -303,7 +364,12 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
       {direct && <span className="inline-flex items-center justify-center gap-2 text-sm text-primary"><Signal className="h-5 w-5 shrink-0" />Connected to GLOBAL NETWORKS (High-Speed Direct Relay)</span>}
       {state === "pool" && !direct && !connecting && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}
       {state === "personal" && <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent"><Home className="h-3.5 w-3.5" />On your own Wi-Fi — your pass time is saved</span>}
-      {state === "searching" && <span className="inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5" />Time Frozen — searching for network</span>}
+      {state === "searching" && deviceState.nearbyPoolDetected && (
+        <span className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary animate-pulse">
+          <Zap className="h-3.5 w-3.5" />Sensed {deviceState.nearbySsid || "Pool Network"} • Connecting automatically
+        </span>
+      )}
+      {state === "searching" && !deviceState.nearbyPoolDetected && <span className="inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5" />Time Frozen — searching for network</span>}
       <div>
         <div className="text-xs uppercase tracking-widest text-muted-foreground">Time remaining</div>
         <div className={`font-mono text-5xl font-bold tabular-nums sm:text-6xl ${session.online ? "glow-text" : "text-warning"}`}>

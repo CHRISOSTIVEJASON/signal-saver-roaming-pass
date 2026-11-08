@@ -45,7 +45,7 @@ export function formatClock(ms: number) {
   return [h, m, sec].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
-export const APP_VERSION = "1.0.6";
+export const APP_VERSION = "1.0.7";
 
 export type WifiState = "pool" | "personal" | "searching";
 /** Pool Wi-Fi drains the pass; the user's own saved Wi-Fi never does; anything else freezes it. */
@@ -86,4 +86,12 @@ export function isUpdateRequired(installed: string, latest: string, required: bo
     if ((b[i] ?? 0) !== (a[i] ?? 0)) return (b[i] ?? 0) > (a[i] ?? 0);
   }
   return false;
+}
+
+export const ALERT_COOLDOWN_MS = 20 * 60 * 1000; // 20 minutes
+
+/** Checks if the 20-minute notification & tone cooldown has elapsed */
+export function shouldAlertNetwork(lastAlertTime: number, now: number, cooldownMs = ALERT_COOLDOWN_MS): boolean {
+  if (!lastAlertTime || lastAlertTime <= 0) return true;
+  return now - lastAlertTime >= cooldownMs;
 }
