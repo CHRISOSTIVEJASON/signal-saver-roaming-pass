@@ -14,16 +14,174 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      gn_mesh_links: {
+        Row: {
+          id: string
+          payload: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          id: string
+          payload: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          payload?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      gn_networks: {
+        Row: {
+          added_at: number
+          bssid: string
+          id: string
+          ssid: string
+          venue: string
+        }
+        Insert: {
+          added_at: number
+          bssid: string
+          id: string
+          ssid: string
+          venue?: string
+        }
+        Update: {
+          added_at?: number
+          bssid?: string
+          id?: string
+          ssid?: string
+          venue?: string
+        }
+        Relationships: []
+      }
+      gn_payment_credentials: {
+        Row: {
+          api_token: string
+          channel_id: string
+          id: string
+          password: string
+          username: string
+        }
+        Insert: {
+          api_token?: string
+          channel_id?: string
+          id?: string
+          password?: string
+          username?: string
+        }
+        Update: {
+          api_token?: string
+          channel_id?: string
+          id?: string
+          password?: string
+          username?: string
+        }
+        Relationships: []
+      }
+      gn_sessions: {
+        Row: {
+          id: string
+          payload: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          id: string
+          payload: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          payload?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      gn_settings: {
+        Row: {
+          apk_url: string
+          id: string
+          latest_version: string
+          live: boolean
+          update_required: boolean
+        }
+        Insert: {
+          apk_url?: string
+          id?: string
+          latest_version?: string
+          live?: boolean
+          update_required?: boolean
+        }
+        Update: {
+          apk_url?: string
+          id?: string
+          latest_version?: string
+          live?: boolean
+          update_required?: boolean
+        }
+        Relationships: []
+      }
+      gn_transactions: {
+        Row: {
+          created_at: string
+          id: string
+          payload: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id: string
+          payload: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          payload?: Json
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +308,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const
