@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { BatteryCharging, Download, FlaskConical, RefreshCw, Settings, ShieldAlert, Share2, Wifi, X } from "lucide-react";
+import { BatteryCharging, Download, FlaskConical, RefreshCw, Settings, ShieldAlert, Share2, Wifi, X, Laptop } from "lucide-react";
 import { toast } from "sonner";
 import { Capacitor } from "@capacitor/core";
 import { GlobalRelay } from "@/lib/native-relay";

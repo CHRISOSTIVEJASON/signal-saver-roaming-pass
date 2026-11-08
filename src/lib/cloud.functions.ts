@@ -30,32 +30,48 @@ export const getAdminPaymentConfig = createServerFn({ method: 'POST' })
     }
   });
 
+
+function getPayHeroAuthHeader(credentials: { api_token?: string; username?: string; password?: string }) {
+  const token = (credentials.api_token || '').trim();
+  if (token) {
+    if (token.toLowerCase().startsWith('basic ')) return token;
+    if (token.includes(':')) return `Basic ${btoa(token)}`;
+    return `Basic ${btoa(`${token}:`)}`;
+  }
+  return `Basic ${btoa(`${credentials.username || ''}:${credentials.password || ''}`)}`;
+}
 export const savePaymentConfig = createServerFn({ method: 'POST' })
   .validator((data: PayConfig) => data)
   .handler(async ({ data }) => {
     if (data.apkUrl && !/^https:\/\//.test(data.apkUrl)) throw new Error('Use an HTTPS APK download link');
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    if (data.apiToken || data.username || data.password || data.channelId) {
+
+    const { data: existingCreds } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
+    const hasCredUpdates = Boolean(data.apiToken || data.username || data.password || data.channelId);
+
+    if (hasCredUpdates || !existingCreds) {
       const { error } = await supabaseAdmin.from('gn_payment_credentials').upsert({
         id: 'global',
-        api_token: data.apiToken || '',
-        username: data.username || '',
-        password: data.password || '',
-        channel_id: data.channelId || ''
+        api_token: data.apiToken !== undefined && data.apiToken !== '' ? data.apiToken : (existingCreds?.api_token || ''),
+        username: data.username !== undefined && data.username !== '' ? data.username : (existingCreds?.username || ''),
+        password: data.password !== undefined && data.password !== '' ? data.password : (existingCreds?.password || ''),
+        channel_id: data.channelId !== undefined && data.channelId !== '' ? data.channelId : (existingCreds?.channel_id || '')
       });
       if (error) {
         console.error('Unable to save payment credentials:', error);
         throw new Error('Unable to save payment credentials: ' + error.message);
       }
     }
-    const { error } = await supabaseAdmin.from('gn_settings').upsert({
+
+    const { data: existingSettings } = await supabaseAdmin.from('gn_settings').select('*').eq('id', 'global').maybeSingle();
+    const { error: settingsError } = await supabaseAdmin.from('gn_settings').upsert({
       id: 'global',
-      apk_url: data.apkUrl || '',
-      latest_version: data.latestVersion || '1.0.0',
-      update_required: Boolean(data.updateRequired),
-      live: Boolean(data.live)
+      apk_url: data.apkUrl !== undefined && data.apkUrl !== '' ? data.apkUrl : (existingSettings?.apk_url || ''),
+      latest_version: data.latestVersion !== undefined && data.latestVersion !== '' ? data.latestVersion : (existingSettings?.latest_version || '1.0.0'),
+      update_required: data.updateRequired !== undefined ? Boolean(data.updateRequired) : Boolean(existingSettings?.update_required),
+      live: data.live !== undefined ? Boolean(data.live) : Boolean(existingSettings?.live)
     });
-    if (error) throw new Error('Unable to save settings');
+    if (settingsError) throw new Error('Unable to save settings');
     return { ok: true };
   });
 
@@ -79,10 +95,9 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
     if (live) {
       const { data: credentials } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
       if (!credentials?.channel_id || !(credentials.api_token || (credentials.username && credentials.password))) {
-        throw new Error('Merchant has not configured live payment details yet');
+        throw new Error('Merchant has not configured live payment details yet. Set Channel ID and API Key in Admin Console.');
       }
-      const token = (credentials.api_token || '').trim();
-      const authorization = token ? (token.toLowerCase().startsWith('basic ') ? token : `Basic ${token}`) : `Basic ${btoa(`${credentials.username}:${credentials.password}`)}`;
+      const authorization = getPayHeroAuthHeader(credentials);
       const response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: authorization },
@@ -121,17 +136,30 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
     if (txn.mode === 'Live' && txn.status !== 'Activated') {
       const { data: c } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
       if (!c) throw new Error('Payment configuration unavailable');
-      const token = (c.api_token || '').trim();
-      const authorization = token ? (token.toLowerCase().startsWith('basic ') ? token : `Basic ${token}`) : `Basic ${btoa(`${c.username}:${c.password}`)}`;
-      const response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(txn.ref)}`, { headers: { Authorization: authorization } });
+      const authorization = getPayHeroAuthHeader(c);
+      const response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(txn.ref)}`, {
+        headers: { Authorization: authorization, Accept: 'application/json' }
+      });
       if (!response.ok) return { pending: true, session: null };
-      const result = await response.json() as { status?: string };
-      const status = result.status?.toUpperCase();
-      if (status === 'FAILED' || status === 'CANCELLED') {
+      const raw = (await response.json().catch(() => ({}))) as any;
+
+      const dataObj = (raw && typeof raw === 'object' && raw.data) ? raw.data : raw;
+      const responseObj = (raw && typeof raw === 'object' && raw.response) ? raw.response : {};
+
+      const statusStr = String(dataObj?.status ?? raw?.status ?? raw?.Status ?? dataObj?.status_text ?? '').trim().toUpperCase();
+      const resultCode = responseObj?.ResultCode ?? dataObj?.ResultCode ?? raw?.ResultCode ?? dataObj?.result_code ?? raw?.result_code;
+      const paymentSuccess = dataObj?.paymentSuccess ?? raw?.paymentSuccess ?? false;
+
+      const isFailed = statusStr === 'FAILED' || statusStr === 'CANCELLED' || statusStr === 'CANCELED' || statusStr === 'ERROR' || statusStr === 'TIMEOUT' || resultCode === 1 || resultCode === 1031 || resultCode === 1032 || resultCode === 1037;
+      if (isFailed) {
         await supabaseAdmin.from('gn_transactions').update({ payload: JSON.parse(JSON.stringify({ ...txn, status: 'Failed' })) }).eq('id', txn.id);
-        throw new Error('Payment was cancelled or failed');
+        throw new Error('Payment was cancelled or failed on your phone');
       }
-      if (status !== 'SUCCESS') return { pending: true, session: null };
+
+      // Check multiple approval conditions
+      const isApproved = statusStr === 'SUCCESS' || statusStr === 'SUCCESSFUL' || statusStr === 'COMPLETED' || statusStr === 'COMPLETE' || statusStr === 'PAID' || statusStr === 'CONFIRMED' || resultCode === 0 || paymentSuccess === true;
+
+      if (!isApproved) return { pending: true, session: null };
     }
 
     const { data: existing } = await supabaseAdmin.from('gn_sessions').select('payload').eq('id', txn.id).maybeSingle();

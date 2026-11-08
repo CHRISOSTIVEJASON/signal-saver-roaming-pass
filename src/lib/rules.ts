@@ -53,10 +53,27 @@ export function connectionState(
   current: { ssid: string; bssid: string } | null,
   poolBssids: string[],
   personalSsids: string[],
+  poolSsids?: string[],
 ): WifiState {
   if (!current) return "searching";
-  if (poolBssids.map((b) => b.toUpperCase()).includes(current.bssid.toUpperCase())) return "pool";
-  if (personalSsids.includes(current.ssid)) return "personal";
+  const currentBssid = current.bssid?.toUpperCase().trim();
+  const currentSsid = current.ssid?.toLowerCase().trim();
+
+  // Match by hardware MAC (BSSID)
+  if (currentBssid && poolBssids.some((b) => b.toUpperCase().trim() === currentBssid)) {
+    return "pool";
+  }
+
+  // Match by network name (SSID) — allows multiple access points in the same school/hotspot sharing the same name to connect
+  if (currentSsid && poolSsids && poolSsids.some((s) => s.toLowerCase().trim() === currentSsid)) {
+    return "pool";
+  }
+
+  // User's personal saved networks
+  if (currentSsid && personalSsids.some((s) => s.toLowerCase().trim() === currentSsid)) {
+    return "personal";
+  }
+
   return "searching";
 }
 

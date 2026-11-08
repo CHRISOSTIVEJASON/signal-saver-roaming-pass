@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal } from "lucide-react";
+import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, type WifiState } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
@@ -18,14 +18,49 @@ import { CaptiveLogin } from "./CaptiveLogin";
 function currentState(): { state: WifiState; ssid: string | undefined } {
   const d = read<Device>(KEYS.device, defaultDevice);
   const nets = read<Network[]>(KEYS.networks, []);
-  return { state: relayProvidesConnection(d.relay, Date.now()) ? "pool" : connectionState(d.currentWifi, nets.map((n) => n.bssid), d.personalSsids), ssid: d.currentWifi?.ssid };
+  return {
+    state: relayProvidesConnection(d.relay, Date.now())
+      ? "pool"
+      : connectionState(
+          d.currentWifi,
+          nets.map((n) => n.bssid),
+          d.personalSsids,
+          nets.map((n) => n.ssid)
+        ),
+    ssid: d.currentWifi?.ssid,
+  };
 }
 
 /** Live Wi-Fi state, re-read whenever the device or pool changes. */
 function useWifiState() {
   const [device] = useStored<Device>(KEYS.device, defaultDevice);
   const [nets] = useStored<Network[]>(KEYS.networks, []);
-  return { state: relayProvidesConnection(device.relay, Date.now()) ? "pool" : connectionState(device.currentWifi, nets.map((n) => n.bssid), device.personalSsids), ssid: device.currentWifi?.ssid, direct: relayProvidesConnection(device.relay, Date.now()) };
+  return {
+    state: relayProvidesConnection(device.relay, Date.now())
+      ? "pool"
+      : connectionState(
+          device.currentWifi,
+          nets.map((n) => n.bssid),
+          device.personalSsids,
+          nets.map((n) => n.ssid)
+        ),
+    ssid: device.currentWifi?.ssid,
+    direct: relayProvidesConnection(device.relay, Date.now()),
+  };
+}
+
+function LocationAlert() {
+  const { state, direct } = useWifiState();
+  if (state === "pool" || direct) return null;
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+      <MapPin className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
+      <div className="text-left leading-relaxed">
+        <span className="font-semibold block">Turn on Location to use Wi-Fi</span>
+        <span>Keep your phone's Location (GPS) ON so the app can sense nearby pool Wi-Fi and connect your pass automatically.</span>
+      </div>
+    </div>
+  );
 }
 
 export function ClientPortal() {
@@ -82,7 +117,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
         let activatedSession: Session | null = null;
         for (let i = 0; i < 60 && !ok; i++) {
           if (i > 0) {
-            await new Promise((res) => setTimeout(res, 1000));
+            await new Promise((res) => setTimeout(res, 1500));
           }
           const st = await confirmPayment({ data: { id: r.id, deviceId } });
           if (!st.pending && st.session) {
@@ -90,7 +125,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
             activatedSession = st.session;
           }
         }
-        if (!ok || !activatedSession) throw new Error("Payment timed out. If you already completed payment, tap 'Restore Active Pass'.");
+        if (!ok || !activatedSession) throw new Error("Payment timed out waiting for PIN. If you completed payment on your phone, tap 'Restore Active Pass'.");
         updateTxn(r.id, { status: "Activated" });
         onActivated(activatedSession);
         toast.success("Payment received — pass activated!");

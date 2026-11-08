@@ -26,6 +26,9 @@ describe("rules", () => {
 import { connectionState, isUpdateRequired } from "@/lib/rules";
 describe("roaming + updates", () => {
   const pool = ["AA:BB:CC:DD:EE:FF"];
+  it("connects to pool Wi-Fi by SSID even with different BSSID (school/campus multi-AP)", () => {
+    expect(connectionState({ ssid: "School_Wifi", bssid: "99:88:77:66:55:44" }, pool, [], ["School_Wifi"])).toBe("pool");
+  });
   it("drains only on stamped pool Wi-Fi", () => {
     expect(connectionState({ ssid: "Mall", bssid: "aa:bb:cc:dd:ee:ff" }, pool, [])).toBe("pool");
   });

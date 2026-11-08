@@ -31,7 +31,7 @@ export function NativeBridge() {
     const check = () => {
       const device=read<Device>(KEYS.device,defaultDevice);
       const active=sessionRef.current.some(s=>s.remainingMs>0);
-      const upstreamInPool=connectionState(device.currentWifi,poolRef.current.map(n=>n.bssid),device.personalSsids)==='pool';
+      const upstreamInPool=connectionState(device.currentWifi,poolRef.current.map(n=>n.bssid),device.personalSsids,poolRef.current.map(n=>n.ssid))==='pool';
       if(active) void GlobalRelay.start({active,upstreamInPool}).catch(()=>{}); else void GlobalRelay.stop().catch(()=>{});
       void GlobalRelay.getState().then(update);
     };

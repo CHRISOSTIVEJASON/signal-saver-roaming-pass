@@ -211,6 +211,7 @@ function PayHeroCard() {
   const [c, setC] = useState(saved);
   const [authOpen, setAuthOpen] = useState(false);
   const [passcode, setPasscode] = useState("");
+  const [saving, setSaving] = useState(false);
   const fetchCloudConfig = useServerFn(getAdminPaymentConfig);
   const saveCloudConfig = useServerFn(savePaymentConfig);
 
@@ -225,7 +226,7 @@ function PayHeroCard() {
             username: prev.username || remote.username,
             password: prev.password || remote.password,
             channelId: prev.channelId || remote.channelId,
-            live: remote.live ?? prev.live,
+            live: remote.live !== undefined ? remote.live : prev.live,
           }));
           setSaved((prev) => ({
             ...prev,
@@ -233,24 +234,13 @@ function PayHeroCard() {
             username: prev.username || remote.username,
             password: prev.password || remote.password,
             channelId: prev.channelId || remote.channelId,
-            live: remote.live ?? prev.live,
+            live: remote.live !== undefined ? remote.live : prev.live,
           }));
         }
       })
       .catch(() => {});
     return () => { cancelled = true; };
   }, [fetchCloudConfig]);
-
-  useEffect(() => {
-    setC((prev) => ({
-      ...prev,
-      ...saved,
-      apiToken: saved.apiToken || prev.apiToken,
-      username: saved.username || prev.username,
-      password: saved.password || prev.password,
-      channelId: saved.channelId || prev.channelId,
-    }));
-  }, [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const set = (k: keyof PayConfig) => (v: string | boolean) => setC((prev) => ({ ...prev, [k]: v }));
 
@@ -268,22 +258,24 @@ function PayHeroCard() {
       toast.error("Incorrect master passcode");
       return;
     }
-    setSaved(c);
+    setSaving(true);
     try {
+      setSaved(c);
       await saveCloudConfig({ data: c });
-      toast.success("PayHero settings saved to cloud");
+      toast.success(c.live ? "Live PayHero STK Push saved & activated!" : "PayHero Demo mode saved");
+      setAuthOpen(false);
+      setPasscode("");
     } catch (err) {
       console.warn("Cloud save error:", err);
       toast.error(err instanceof Error ? err.message : "Failed to save to cloud");
-      return;
+    } finally {
+      setSaving(false);
     }
-    setAuthOpen(false);
-    setPasscode("");
   };
 
   return (
-    <Panel title="PayHero Configuration" icon={<KeyRound className="h-4 w-4" />}>
-      <div className="space-y-3">
+    <Panel title="PayHero M-Pesa Configuration" icon={<Wallet className="h-4 w-4" />}>
+      <div className="space-y-4">
         <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-background p-1 text-sm">
           <Button
             type="button"
@@ -302,93 +294,41 @@ function PayHeroCard() {
             Live PayHero STK Push
           </Button>
         </div>
-        <Field label="API Key / Basic Auth Token"><Secret value={c.apiToken} onChange={set("apiToken")} placeholder="Basic xxxxx (optional if username/password set)" /></Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Username"><input className={inputCls} value={c.username} onChange={(e) => set("username")(e.target.value)} autoComplete="off" /></Field>
-          <Field label="Password"><Secret value={c.password} onChange={set("password")} /></Field>
+
+        <div className="space-y-3">
+          <Field label="Channel ID (PayHero Channel ID)"><input className={inputCls + " font-mono"} value={c.channelId} placeholder="e.g. 1234" onChange={(e) => set("channelId")(e.target.value)} /></Field>
+          <Field label="API Token (Basic / API Key)"><input type="password" className={inputCls + " font-mono"} value={c.apiToken} placeholder="API Token or Basic Key" onChange={(e) => set("apiToken")(e.target.value)} /></Field>
+          <div className="relative flex items-center justify-center">
+            <span className="bg-card px-2 text-xs text-muted-foreground">OR HTTP Basic Auth</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="Username"><input className={inputCls} value={c.username} placeholder="Username" onChange={(e) => set("username")(e.target.value)} /></Field>
+            <Field label="Password"><input type="password" className={inputCls} value={c.password} placeholder="Password" onChange={(e) => set("password")(e.target.value)} /></Field>
+          </div>
         </div>
-        <Field label="Channel ID"><input className={inputCls} inputMode="numeric" value={c.channelId} onChange={(e) => set("channelId")(e.target.value)} /></Field>
-        <Button onClick={handleSaveClick} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save Configuration</Button>
+
+        <Button onClick={handleSaveClick} disabled={saving} className="h-10 w-full font-medium">
+          {saving ? "Saving to Cloud…" : "Save PayHero Settings"}
+        </Button>
       </div>
 
       {authOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => { setAuthOpen(false); setPasscode(""); }}>
-          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-base">Authorize PayHero Update</h3>
-              <Button variant="ghost" size="icon" onClick={() => { setAuthOpen(false); setPasscode(""); }} aria-label="Close"><X className="h-4 w-4" /></Button>
-            </div>
-            <p className="text-xs text-muted-foreground">Enter master passcode to confirm updating PayHero credentials.</p>
-            <form onSubmit={confirmSave} className="space-y-4">
-              <Secret value={passcode} onChange={setPasscode} placeholder="Enter master passcode" />
-              <div className="flex gap-2">
-                <Button type="button" onClick={() => { setAuthOpen(false); setPasscode(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
-                <Button type="submit" className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">Authorize & Save</Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function PasscodeCard() {
-  const [step, setStep] = useState<"idle" | "security" | "new">("idle");
-  const [sec, setSec] = useState("");
-  const [pass, setPass] = useState("");
-  const [saving, setSaving] = useState(false);
-  const saveCloudPasscode = useServerFn(updateMasterPasscode);
-
-  const verify = () => {
-    if (sec !== "2006") { toast.error("Invalid security code"); return; }
-    setStep("new");
-  };
-
-  const save = async () => {
-    const r = changePasscode(sec, pass);
-    if (!r.ok) { toast.error(r.error); return; }
-    setSaving(true);
-    try {
-      await saveCloudPasscode({ data: { currentSecurityCode: sec, newPasscode: r.passcode } });
-      write(KEYS.passcode, r.passcode);
-      toast.success("Master passcode updated globally across all apps");
-      setStep("idle"); setSec(""); setPass("");
-    } catch (err: any) {
-      console.error("Cloud passcode sync warning:", err);
-      toast.error(err?.message || "Failed to update master passcode in cloud");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Panel title="Master Passcode" icon={<KeyRound className="h-4 w-4" />}>
-      {step === "idle" && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">Change the master passcode used to open this dashboard across all apps. A security code is required.</p>
-          <Button onClick={() => setStep("security")} className="h-10 w-full rounded-lg border border-border text-sm font-medium hover:bg-secondary">Change Passcode</Button>
-        </div>
-      )}
-      {step === "security" && (
-        <div className="space-y-3">
-          <Field label="Enter Security Code"><Secret value={sec} onChange={setSec} /></Field>
+        <form onSubmit={confirmSave} className="mt-4 space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
+          <div className="text-xs font-semibold uppercase tracking-wider text-primary">Master Passcode Required</div>
+          <p className="text-xs text-muted-foreground">Enter master passcode to confirm changes to live payment settings.</p>
+          <input
+            type="password"
+            autoFocus
+            className={inputCls + " font-mono"}
+            placeholder="Enter passcode"
+            value={passcode}
+            onChange={(e) => setPasscode(e.target.value)}
+          />
           <div className="flex gap-2">
-            <Button onClick={() => { setStep("idle"); setSec(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
-            <Button onClick={verify} className="h-10 flex-1 rounded-lg bg-accent text-sm font-semibold text-accent-foreground">Verify</Button>
+            <Button type="button" variant="outline" onClick={() => setAuthOpen(false)} className="flex-1">Cancel</Button>
+            <Button type="submit" disabled={saving} className="flex-1">{saving ? "Saving…" : "Confirm & Save"}</Button>
           </div>
-        </div>
-      )}
-      {step === "new" && (
-        <div className="space-y-3">
-          <Field label="New Master Passcode"><Secret value={pass} onChange={setPass} /></Field>
-          <div className="flex gap-2">
-            <Button onClick={() => { setStep("idle"); setSec(""); setPass(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
-            <Button onClick={save} disabled={saving} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
-              {saving ? "Saving..." : "Save Passcode"}
-            </Button>
-          </div>
-        </div>
+        </form>
       )}
     </Panel>
   );
@@ -446,6 +386,7 @@ function PoolManager() {
   const [pendingCaptiveNetwork, setPendingCaptiveNetwork] = useState<Network | null>(null);
   const [stamping, setStamping] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
   const deleteNetwork = useServerFn(removeCloudNetwork);
   const pushNetworks = useServerFn(syncCloudNetworks);
   const cur = device.currentWifi;
@@ -570,28 +511,73 @@ function PoolManager() {
           <Plus className="h-4 w-4" />{isCaptive ? "Configure & Save Captive Wi-Fi" : "Save Wi-Fi Network into Pool"}
         </Button>
       </div>
-      {networks.length === 0 ? <p className="py-4 text-center text-sm text-muted-foreground">No networks stamped yet.</p> : (
-        <ul className="space-y-2">
-          {networks.map((n) => (
-            <li key={n.id} className="flex items-center gap-2 rounded-lg border border-border bg-background/50 p-2.5">
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">{n.ssid}</div>
-                <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
+      <div className="mt-4 pt-3 border-t border-border">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setListOpen(true)}
+          className="flex h-12 w-full items-center justify-between rounded-lg border border-border bg-background/50 px-4 text-xs font-semibold hover:bg-secondary"
+        >
+          <span className="flex items-center gap-2">
+            <Wifi className="h-4 w-4 text-primary" /> Stamped Wi-Fi Networks
+          </span>
+          <span className="rounded-full bg-primary/10 px-2.5 py-0.5 font-mono text-xs text-primary font-bold">
+            {networks.length} stamped
+          </span>
+        </Button>
+      </div>
+
+      {listOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setListOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-xl border border-border bg-card p-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Wifi className="h-4 w-4 text-primary" />
+                <h3 className="font-semibold text-base">Stamped Wi-Fi Networks</h3>
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary font-mono">{networks.length}</span>
               </div>
-              <Button variant="outline" size="icon" title="Edit network login" aria-label={`Edit network login for ${n.ssid}`} onClick={() => setEditing(n)}><KeyRound className="h-4 w-4" /></Button>
-              <Button onClick={async () => {
-                const next = networks.filter((x) => x.id !== n.id && x.bssid.toUpperCase() !== n.bssid.toUpperCase());
-                setNetworks(next);
-                void saveShared(KEYS.networks, next).catch(() => {});
-                try {
-                  await deleteNetwork({ data: { id: n.id } });
-                } catch {}
-                toast("Removed from pool");
-              }}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive px-2 py-1.5 text-xs font-medium text-destructive-foreground"><Trash2 className="h-3 w-3" />Remove from Pool</Button>
-            </li>
-          ))}
-        </ul>
+              <Button variant="ghost" size="icon" onClick={() => setListOpen(false)} aria-label="Close">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto py-3 space-y-2">
+              {networks.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">No networks stamped yet.</p>
+              ) : (
+                networks.map((n) => (
+                  <div key={n.id} className="flex items-center gap-2 rounded-lg border border-border bg-background/50 p-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{n.ssid}</div>
+                      <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
+                    </div>
+                    <Button variant="outline" size="icon" title="Captive Portal Login" onClick={() => setEditing(n)} className="h-8 w-8 rounded-lg text-primary hover:bg-primary/10">
+                      <KeyRound className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={async () => {
+                        const next = networks.filter((x) => x.id !== n.id && x.bssid.toUpperCase() !== n.bssid.toUpperCase());
+                        setNetworks(next);
+                        void saveShared(KEYS.networks, next).catch(() => {});
+                        try {
+                          await deleteNetwork({ data: { id: n.id } });
+                        } catch {}
+                        toast("Removed from pool");
+                      }}
+                      className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="border-t border-border pt-3 flex justify-end">
+              <Button onClick={() => setListOpen(false)} className="h-9 px-4 text-xs font-semibold">Done</Button>
+            </div>
+          </div>
+        </div>
       )}
       {pendingCaptiveNetwork && (
         <CaptiveCredentialsDialog
