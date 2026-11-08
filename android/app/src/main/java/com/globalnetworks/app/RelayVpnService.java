@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Intent;
+import android.net.ProxyInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
@@ -50,7 +51,7 @@ public class RelayVpnService extends VpnService {
             hostPort = intent.getIntExtra(EXTRA_HOST_PORT, 8282);
         }
 
-        startForegroundNotification("Global Networks Auto-Router", "Active connection tunnel to relay host " + hostIp + ":" + hostPort);
+        startForegroundNotification("Global Networks Auto-Router", "Active relay tunnel to host " + hostIp + ":" + hostPort);
         startVpnTunnel();
         return START_STICKY;
     }
@@ -74,23 +75,30 @@ public class RelayVpnService extends VpnService {
 
     private synchronized void startVpnTunnel() {
         if (isRunning.get()) return;
-        isRunning.set(true);
 
         try {
             Builder builder = new Builder();
             builder.setSession("Global Networks Client Router");
             builder.addAddress("10.8.0.2", 24);
-            builder.addRoute("0.0.0.0", 0);
+            builder.addRoute("10.8.0.0", 24);
             builder.addDnsServer("8.8.8.8");
             builder.addDnsServer("1.1.1.1");
             builder.setMtu(1500);
 
+            try {
+                builder.addDisallowedApplication(getPackageName());
+            } catch (Exception ignored) {}
+
+            if (Build.VERSION.SDK_INT >= 29) {
+                builder.setHttpProxy(ProxyInfo.buildDirectProxy(hostIp, hostPort));
+            }
+
             vpnInterface = builder.establish();
             if (vpnInterface == null) {
-                isRunning.set(false);
                 return;
             }
 
+            isRunning.set(true);
             executor = Executors.newCachedThreadPool();
             executor.execute(this::runTunReader);
         } catch (Exception e) {

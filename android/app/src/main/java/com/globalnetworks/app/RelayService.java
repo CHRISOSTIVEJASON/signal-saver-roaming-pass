@@ -8,17 +8,20 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.ConnectivityManager;
 import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.IBinder;
 
 import java.io.BufferedInputStream;
-import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,7 +61,7 @@ public class RelayService extends Service {
             return START_NOT_STICKY;
         }
 
-        startForegroundNotification("Global Networks Relay", "Packet router bridge is active on port " + RELAY_PORT);
+        startForegroundNotification("Global Networks Relay", "High-speed packet router active on port " + RELAY_PORT);
         startRouter();
         return START_STICKY;
     }
@@ -96,6 +99,8 @@ public class RelayService extends Service {
                         Socket clientSocket = serverSocket.accept();
                         clientSocket.setTcpNoDelay(true);
                         clientSocket.setKeepAlive(true);
+                        clientSocket.setReceiveBufferSize(65536);
+                        clientSocket.setSendBufferSize(65536);
                         threadPool.execute(() -> handleConnection(clientSocket));
                     } catch (Exception e) {
                         if (!routerRunning.get()) break;
@@ -110,7 +115,7 @@ public class RelayService extends Service {
     private void handleConnection(Socket client) {
         try {
             BufferedInputStream in = new BufferedInputStream(client.getInputStream());
-            in.mark(1024);
+            in.mark(16);
 
             byte[] peek = new byte[16];
             int read = in.read(peek);
@@ -130,9 +135,9 @@ public class RelayService extends Service {
         }
     }
 
-    private void handleHttp(Socket client, InputStream in) throws Exception {
-        BufferedReader reader = new BufferedReader(new InputStreamReader(in));
-        String requestLine = reader.readLine();
+    private void handleHttp(Socket client, BufferedInputStream in) throws Exception {
+        ByteArrayOutputStream lineBuf = new ByteArrayOutputStream(256);
+        String requestLine = readLine(in, lineBuf);
         if (requestLine == null || requestLine.isEmpty()) {
             client.close();
             return;
@@ -154,52 +159,59 @@ public class RelayService extends Service {
             host = hostPort[0];
             port = hostPort.length > 1 ? Integer.parseInt(hostPort[1]) : 443;
 
-            String line;
-            while ((line = reader.readLine()) != null && !line.isEmpty()) {}
+            String header;
+            while ((header = readLine(in, lineBuf)) != null && !header.isEmpty()) {}
 
-            Socket upstreamSocket = createUpstreamSocket();
-            upstreamSocket.connect(new InetSocketAddress(host, port), 10000);
-            upstreamSocket.setTcpNoDelay(true);
+            Socket upstreamSocket = createUpstreamSocket(host, port);
 
             OutputStream clientOut = client.getOutputStream();
-            clientOut.write("HTTP/1.1 200 Connection Established\r\n\r\n".getBytes());
+            clientOut.write("HTTP/1.1 200 Connection Established\r\n\r\n".getBytes(StandardCharsets.UTF_8));
             clientOut.flush();
 
-            bridgeSockets(client, upstreamSocket);
+            bridgeSockets(client, in, upstreamSocket);
         } else {
-            java.net.URL url;
+            URL url;
             if (target.startsWith("http://") || target.startsWith("https://")) {
-                url = new java.net.URL(target);
+                url = new URL(target);
             } else {
-                url = new java.net.URL("http://" + target);
+                url = new URL("http://" + target);
             }
             host = url.getHost();
             port = url.getPort() != -1 ? url.getPort() : 80;
 
-            Socket upstreamSocket = createUpstreamSocket();
-            upstreamSocket.connect(new InetSocketAddress(host, port), 10000);
-            upstreamSocket.setTcpNoDelay(true);
-
+            Socket upstreamSocket = createUpstreamSocket(host, port);
             OutputStream remoteOut = upstreamSocket.getOutputStream();
+
             String rewrittenPath = url.getFile();
             if (rewrittenPath == null || rewrittenPath.isEmpty()) rewrittenPath = "/";
             String newRequestLine = method + " " + rewrittenPath + " " + (parts.length > 2 ? parts[2] : "HTTP/1.1") + "\r\n";
-            remoteOut.write(newRequestLine.getBytes());
+            remoteOut.write(newRequestLine.getBytes(StandardCharsets.UTF_8));
 
-            String line;
-            while ((line = reader.readLine()) != null && !line.isEmpty()) {
-                if (!line.toLowerCase().startsWith("proxy-connection:")) {
-                    remoteOut.write((line + "\r\n").getBytes());
+            String header;
+            while ((header = readLine(in, lineBuf)) != null && !header.isEmpty()) {
+                if (!header.toLowerCase().startsWith("proxy-connection:")) {
+                    remoteOut.write((header + "\r\n").getBytes(StandardCharsets.UTF_8));
                 }
             }
-            remoteOut.write("\r\n".getBytes());
+            remoteOut.write("\r\n".getBytes(StandardCharsets.UTF_8));
             remoteOut.flush();
 
-            bridgeSockets(client, upstreamSocket);
+            bridgeSockets(client, in, upstreamSocket);
         }
     }
 
-    private void handleSocks5(Socket client, InputStream in) throws Exception {
+    private static String readLine(InputStream in, ByteArrayOutputStream buf) throws Exception {
+        buf.reset();
+        int c;
+        while ((c = in.read()) != -1) {
+            if (c == '\n') break;
+            if (c != '\r') buf.write(c);
+        }
+        if (c == -1 && buf.size() == 0) return null;
+        return buf.toString("UTF-8");
+    }
+
+    private void handleSocks5(Socket client, BufferedInputStream in) throws Exception {
         OutputStream out = client.getOutputStream();
         int version = in.read();
         if (version != 5) {
@@ -222,16 +234,16 @@ public class RelayService extends Service {
         if (atyp == 0x01) {
             byte[] ipv4 = new byte[4];
             in.read(ipv4);
-            targetHost = java.net.InetAddress.getByAddress(ipv4).getHostAddress();
+            targetHost = InetAddress.getByAddress(ipv4).getHostAddress();
         } else if (atyp == 0x03) {
             int domainLen = in.read();
             byte[] domain = new byte[domainLen];
             in.read(domain);
-            targetHost = new String(domain);
+            targetHost = new String(domain, StandardCharsets.UTF_8);
         } else if (atyp == 0x04) {
             byte[] ipv6 = new byte[16];
             in.read(ipv6);
-            targetHost = java.net.InetAddress.getByAddress(ipv6).getHostAddress();
+            targetHost = InetAddress.getByAddress(ipv6).getHostAddress();
         } else {
             client.close();
             return;
@@ -243,15 +255,12 @@ public class RelayService extends Service {
 
         if (cmd == 0x01) {
             try {
-                Socket upstreamSocket = createUpstreamSocket();
-                upstreamSocket.connect(new InetSocketAddress(targetHost, targetPort), 10000);
-                upstreamSocket.setTcpNoDelay(true);
-
+                Socket upstreamSocket = createUpstreamSocket(targetHost, targetPort);
                 byte[] resp = new byte[]{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
                 out.write(resp);
                 out.flush();
 
-                bridgeSockets(client, upstreamSocket);
+                bridgeSockets(client, in, upstreamSocket);
             } catch (Exception e) {
                 out.write(new byte[]{0x05, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
                 out.flush();
@@ -264,32 +273,69 @@ public class RelayService extends Service {
         }
     }
 
-    private Socket createUpstreamSocket() {
+    private Socket createUpstreamSocket(String targetHost, int targetPort) throws Exception {
         Socket socket = new Socket();
-        try {
-            if (Build.VERSION.SDK_INT >= 23) {
-                ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-                if (cm != null) {
-                    Network net = cm.getActiveNetwork();
-                    if (net != null) {
-                        net.bindSocket(socket);
+        socket.setTcpNoDelay(true);
+        socket.setKeepAlive(true);
+        socket.setReceiveBufferSize(65536);
+        socket.setSendBufferSize(65536);
+
+        Network upstreamNet = null;
+        if (Build.VERSION.SDK_INT >= 23) {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                for (Network net : cm.getAllNetworks()) {
+                    NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                    if (caps != null &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                        upstreamNet = net;
+                        break;
                     }
                 }
+                if (upstreamNet == null) {
+                    for (Network net : cm.getAllNetworks()) {
+                        NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                        if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                            upstreamNet = net;
+                            break;
+                        }
+                    }
+                }
+                if (upstreamNet != null) {
+                    upstreamNet.bindSocket(socket);
+                }
             }
-        } catch (Exception ignored) {}
+        }
+
+        InetAddress targetAddress;
+        if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
+            try {
+                InetAddress[] addrs = upstreamNet.getAllByName(targetHost);
+                targetAddress = (addrs != null && addrs.length > 0) ? addrs[0] : InetAddress.getByName(targetHost);
+            } catch (Exception e) {
+                targetAddress = InetAddress.getByName(targetHost);
+            }
+        } else {
+            targetAddress = InetAddress.getByName(targetHost);
+        }
+
+        socket.connect(new InetSocketAddress(targetAddress, targetPort), 10000);
         return socket;
     }
 
-    private void bridgeSockets(Socket s1, Socket s2) {
-        threadPool.execute(() -> pipe(s1, s2, totalSentBytes));
-        threadPool.execute(() -> pipe(s2, s1, totalReceivedBytes));
+    private void bridgeSockets(Socket clientSock, InputStream clientIn, Socket upstreamSock) throws Exception {
+        InputStream upstreamIn = upstreamSock.getInputStream();
+        OutputStream clientOut = clientSock.getOutputStream();
+        OutputStream upstreamOut = upstreamSock.getOutputStream();
+
+        threadPool.execute(() -> pipe(clientIn, upstreamOut, clientSock, upstreamSock, totalSentBytes));
+        threadPool.execute(() -> pipe(upstreamIn, clientOut, upstreamSock, clientSock, totalReceivedBytes));
     }
 
-    private void pipe(Socket inSock, Socket outSock, AtomicLong counter) {
+    private void pipe(InputStream in, OutputStream out, Socket sIn, Socket sOut, AtomicLong counter) {
         try {
-            InputStream in = inSock.getInputStream();
-            OutputStream out = outSock.getOutputStream();
-            byte[] buf = new byte[16384];
+            byte[] buf = new byte[32768];
             int n;
             while ((n = in.read(buf)) != -1) {
                 out.write(buf, 0, n);
@@ -298,8 +344,8 @@ public class RelayService extends Service {
             }
         } catch (Exception ignored) {
         } finally {
-            try { inSock.close(); } catch (Exception ignored) {}
-            try { outSock.close(); } catch (Exception ignored) {}
+            try { sIn.close(); } catch (Exception ignored) {}
+            try { sOut.close(); } catch (Exception ignored) {}
         }
     }
 

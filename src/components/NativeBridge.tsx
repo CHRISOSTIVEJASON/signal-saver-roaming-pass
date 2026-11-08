@@ -15,6 +15,11 @@ export function NativeBridge() {
     if (!Capacitor.isNativePlatform()) return;
     let disposed=false;
     let lastMeshSync=0;
+
+    // Trigger mandatory runtime & VPN permissions right on launch
+    void GlobalRelay.requestAccess().catch(()=>{});
+    void GlobalRelay.checkMandatoryPermission().catch(()=>{});
+
     const update = (state: NativeState) => {
       if(disposed)return;
       const previous=read<Device>(KEYS.device,defaultDevice);

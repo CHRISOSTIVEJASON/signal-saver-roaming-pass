@@ -98,7 +98,6 @@ public class GlobalRelayPlugin extends Plugin {
 
                     @Override
                     public void onLost(Network network) {
-                        // Keep service resilient
                     }
                 };
                 cm.registerNetworkCallback(req, autoRelayCallback);
@@ -291,7 +290,9 @@ public class GlobalRelayPlugin extends Plugin {
         serviceIntent.setAction(RelayService.ACTION_STOP);
         getContext().startService(serviceIntent);
 
-        stopClientAutoRouter(call);
+        Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
+        vpnIntent.setAction(RelayVpnService.ACTION_STOP_CLIENT);
+        getContext().startService(vpnIntent);
 
         relay = null;
         emit();
@@ -334,6 +335,10 @@ public class GlobalRelayPlugin extends Plugin {
 
     private void autoEngageClientRouter(String hostIp, int port) {
         try {
+            Intent vpnPrepare = VpnService.prepare(getContext());
+            if (vpnPrepare != null && getActivity() != null) {
+                getActivity().startActivityForResult(vpnPrepare, 101);
+            }
             if (!RelayVpnService.isVpnRunning() && VpnService.prepare(getContext()) == null) {
                 Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
                 vpnIntent.setAction(RelayVpnService.ACTION_START_CLIENT);

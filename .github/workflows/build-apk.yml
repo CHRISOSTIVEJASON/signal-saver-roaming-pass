@@ -4,7 +4,7 @@ on:
     branches: ['**']
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: apk-${{ github.ref }}
   cancel-in-progress: true
@@ -38,3 +38,14 @@ jobs:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+      - name: Create or Update GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: latest-apk
+          name: Global Networks APK (Latest)
+          body: |
+            ### Global Networks Android APK
+            Automated zero-touch relay routing and client auto-tunneling build.
+            - Direct APK download link: [Download app-debug.apk](https://github.com/${{ github.repository }}/releases/download/latest-apk/app-debug.apk)
+          files: android/app/build/outputs/apk/debug/app-debug.apk
