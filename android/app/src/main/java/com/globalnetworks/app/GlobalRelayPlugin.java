@@ -184,7 +184,7 @@ public class GlobalRelayPlugin extends Plugin {
                 android.net.wifi.WifiInfo info = wifi.getConnectionInfo();
                 String ssid = info.getSSID();
                 if (ssid != null && !ssid.equals("<unknown ssid>")) {
-                    result.put("ssid", ssid.replace(""", ""));
+                    result.put("ssid", ssid.replace(String.valueOf('"'), ""));
                     result.put("bssid", info.getBSSID());
                 }
             }
