@@ -1,3 +1,5 @@
+import { getAdminPaymentConfig, savePaymentConfig } from "@/lib/cloud.functions";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type ReactNode } from "react";
 import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X } from "lucide-react";
 import { toast } from "sonner";
@@ -147,9 +149,48 @@ function PayHeroCard() {
   const [c, setC] = useState(saved);
   const [authOpen, setAuthOpen] = useState(false);
   const [passcode, setPasscode] = useState("");
+  const fetchCloudConfig = useServerFn(getAdminPaymentConfig);
+  const saveCloudConfig = useServerFn(savePaymentConfig);
 
-  useEffect(() => setC(saved), [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const set = (k: keyof PayConfig) => (v: string | boolean) => setC({ ...c, [k]: v });
+  useEffect(() => {
+    let cancelled = false;
+    void fetchCloudConfig({ data: {} })
+      .then((remote) => {
+        if (!cancelled && remote) {
+          setC((prev) => ({
+            ...prev,
+            apiToken: prev.apiToken || remote.apiToken,
+            username: prev.username || remote.username,
+            password: prev.password || remote.password,
+            channelId: prev.channelId || remote.channelId,
+            live: remote.live ?? prev.live,
+          }));
+          setSaved((prev) => ({
+            ...prev,
+            apiToken: prev.apiToken || remote.apiToken,
+            username: prev.username || remote.username,
+            password: prev.password || remote.password,
+            channelId: prev.channelId || remote.channelId,
+            live: remote.live ?? prev.live,
+          }));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [fetchCloudConfig]);
+
+  useEffect(() => {
+    setC((prev) => ({
+      ...prev,
+      ...saved,
+      apiToken: saved.apiToken || prev.apiToken,
+      username: saved.username || prev.username,
+      password: saved.password || prev.password,
+      channelId: saved.channelId || prev.channelId,
+    }));
+  }, [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (k: keyof PayConfig) => (v: string | boolean) => setC((prev) => ({ ...prev, [k]: v }));
 
   const handleSaveClick = () => {
     if (c.live && (!c.channelId || !(c.apiToken || (c.username && c.password)))) {
@@ -159,13 +200,18 @@ function PayHeroCard() {
     setAuthOpen(true);
   };
 
-  const confirmSave = (e: React.FormEvent) => {
+  const confirmSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passcode !== getPasscode()) {
       toast.error("Incorrect master passcode");
       return;
     }
     setSaved(c);
+    try {
+      await saveCloudConfig({ data: c });
+    } catch (err) {
+      console.warn("Cloud save deferred:", err);
+    }
     toast.success("PayHero settings saved");
     setAuthOpen(false);
     setPasscode("");

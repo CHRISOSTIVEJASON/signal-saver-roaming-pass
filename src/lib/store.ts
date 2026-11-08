@@ -146,3 +146,13 @@ export function recordRelayTick(phone: string) {
     events: [ev, ...log.events].slice(0, 200),
   });
 }
+
+export function getDeviceId(): string {
+  if (typeof window === "undefined") return "browser-device";
+  let id = localStorage.getItem("gn_device_id");
+  if (!id) {
+    id = "dev-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+    try { localStorage.setItem("gn_device_id", id); } catch {}
+  }
+  return id;
+}

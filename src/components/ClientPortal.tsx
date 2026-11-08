@@ -4,7 +4,9 @@ import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, type WifiState } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useServerFn } from "@tanstack/react-start";
-import { initiateStkPush, checkStkStatus } from "@/lib/payhero.functions";
+import { startCloudPayment, confirmCloudPayment, restoreCloudPass } from "@/lib/cloud.functions";
+import { getDeviceId } from "@/lib/store";
+import { X } from "lucide-react";
 import { relayProvidesConnection } from "@/lib/relay";
 import { Button } from "./ui/button";
 import { Capacitor } from "@capacitor/core";
@@ -47,8 +49,12 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
   const pass = getPass(passId);
 
-  const startPush = useServerFn(initiateStkPush);
-  const checkStatus = useServerFn(checkStkStatus);
+  const startPayment = useServerFn(startCloudPayment);
+  const confirmPayment = useServerFn(confirmCloudPayment);
+  const restorePass = useServerFn(restoreCloudPass);
+  const [restoreOpen, setRestoreOpen] = useState(false);
+  const [restorePhone, setRestorePhone] = useState("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
 
   const updateTxn = (id: string, patch: Partial<Txn>) =>
     setTxns((p) => p.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -57,7 +63,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
     const msisdn = normalizePhone(phone);
     if (!msisdn) { toast.error("Enter a valid Safaricom number (07… or 01…)"); return; }
     const cfg = read<PayConfig>(KEYS.config, defaultConfig);
-    const live = Boolean(cfg.live && cfg.channelId && (cfg.apiToken || (cfg.username && cfg.password)));
+    const live = Boolean(cfg.live);
     const txnId = uid();
     let ref = "GN" + uid();
     setTxns((p) => [{ id: txnId, phone: msisdn, amount: pass.amount, passId, ref, at: Date.now(), status: "Pending", mode: live ? "Live" : "Demo" }, ...p]);
@@ -65,39 +71,65 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
     try {
       if (live) {
         setBusy("Sending M-Pesa prompt to your phone…");
-        const creds = { apiToken: cfg.apiToken, username: cfg.username, password: cfg.password, channelId: cfg.channelId };
-        const r = await startPush({ data: { ...creds, phone: msisdn, amount: pass.amount, reference: ref } });
-        if (!r.ok) throw new Error(r.error);
-        if (r.reference) ref = r.reference;
+        const deviceId = getDeviceId();
+        const r = await startPayment({ data: { phone: msisdn, passId: pass.id as 'p15' | 'p30', deviceId } });
+        if (r.ref) ref = r.ref;
         updateTxn(txnId, { ref });
         setBusy("Enter your M-Pesa PIN on your phone…");
         let ok = false;
+        let activatedSession: Session | null = null;
         for (let i = 0; i < 30 && !ok; i++) {
           await new Promise((res) => setTimeout(res, 3000));
-          const st = await checkStatus({ data: { ...creds, reference: ref } });
-          if (st.status === "SUCCESS") { ok = true; if (st.receipt) { ref = st.receipt; updateTxn(txnId, { ref }); } }
-          else if (st.status === "FAILED" || st.status === "CANCELLED") throw new Error("Payment was cancelled or failed");
+          const st = await confirmPayment({ data: { id: r.id, deviceId } });
+          if (!st.pending && st.session) {
+            ok = true;
+            activatedSession = st.session;
+          }
         }
-        if (!ok) throw new Error("Payment timed out. Please try again.");
+        if (!ok || !activatedSession) throw new Error("Payment timed out. If you already completed payment, tap 'Restore Active Pass'.");
+        updateTxn(txnId, { status: "Activated" });
+        onActivated(activatedSession);
+        toast.success("Payment received — pass activated!");
       } else {
         setBusy("Sending M-Pesa prompt to your phone…");
         await new Promise((r) => setTimeout(r, 1200));
         setBusy("Confirming payment…");
         await new Promise((r) => setTimeout(r, 1200));
         ref = "S" + uid() + "K";
-        updateTxn(txnId, { ref });
+        updateTxn(txnId, { ref, status: "Activated" });
+        const now = Date.now();
+        const ms = pass.hours * 3600_000;
+        const s: Session = { id: uid(), phone: msisdn, passId, totalMs: ms, remainingMs: ms, lastTick: now, online: true, startedAt: now };
+        onActivated(s);
+        toast.success("Demo pass activated — no money charged");
       }
-      updateTxn(txnId, { status: "Activated" });
-      const now = Date.now();
-      const ms = pass.hours * 3600_000;
-      const s: Session = { id: uid(), phone: msisdn, passId, totalMs: ms, remainingMs: ms, lastTick: now, online: true, startedAt: now };
-      onActivated(s);
-      toast.success(live ? "Payment received — pass activated!" : "Demo pass activated — no money charged");
     } catch (e) {
       updateTxn(txnId, { status: "Failed" });
       toast.error(e instanceof Error ? e.message : "Payment failed");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function handleRestore(e: React.FormEvent) {
+    e.preventDefault();
+    const msisdn = normalizePhone(restorePhone);
+    if (!msisdn) {
+      toast.error("Enter a valid Safaricom phone number (07… or 01…)");
+      return;
+    }
+    setRestoreBusy(true);
+    try {
+      const res = await restorePass({ data: { phone: msisdn, deviceId: getDeviceId() } });
+      if (res?.session) {
+        onActivated(res.session);
+        toast.success("Active pass restored!");
+        setRestoreOpen(false);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to restore pass");
+    } finally {
+      setRestoreBusy(false);
     }
   }
 
@@ -124,8 +156,49 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-70">
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>
-        <p className="text-center text-xs text-muted-foreground">You\x27ll get a prompt on your phone. Enter your PIN to confirm.</p>
+        <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
+        <div className="pt-2 text-center">
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => setRestoreOpen(true)}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            Reinstalled app? Restore Active Pass
+          </Button>
+        </div>
       </div>
+
+      {restoreOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setRestoreOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-base">Restore Active Pass</h3>
+              <Button variant="ghost" size="icon" onClick={() => setRestoreOpen(false)} aria-label="Close"><X className="h-4 w-4" /></Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Enter the M-Pesa phone number you used to purchase your pass to regain access on this device.</p>
+            <form onSubmit={handleRestore} className="space-y-3">
+              <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
+                <Smartphone className="h-4 w-4 text-muted-foreground" />
+                <input
+                  autoFocus
+                  type="tel"
+                  placeholder="07XX XXX XXX"
+                  value={restorePhone}
+                  onChange={(e) => setRestorePhone(e.target.value)}
+                  className="h-10 w-full bg-transparent font-mono text-sm outline-none"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" onClick={() => setRestoreOpen(false)} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
+                <Button type="submit" disabled={restoreBusy} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+                  {restoreBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Restore Pass"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
