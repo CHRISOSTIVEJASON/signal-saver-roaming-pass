@@ -29,3 +29,7 @@ use the editor.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
 - Wi-Fi, Android permissions and app mode are simulated via the Device record (gn_device) + Test controls drawer; browsers can't read them, a native wrapper must feed real values there.
+- Use authenticated Cloud functions for payment activation and session writes; browser caches are projections, never payment authority.
+- Keep administrator privileges in protected user_roles; no browser passcode or first-user bootstrap may grant Cloud authority.
+- Capacitor loads the published HTTPS app with a registered Android plugin; keep native calls behind platform checks to preserve web SSR.
+- Native group negotiation must report transport readiness separately from local connectivity because P2P is not internet forwarding.
