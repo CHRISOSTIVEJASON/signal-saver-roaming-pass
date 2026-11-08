@@ -63,7 +63,7 @@ export function UpdateGate() {
 export function Onboarding() {
   const [device, setDevice] = useDevice();
   const [i, setI] = useState(0);
-  const p = PERMS[i];
+  const p = PERMS[i] ?? PERMS[0]!;
   const answer = (v: Perm) => {
     const perms = { ...device.perms, [p.key]: v };
     const done = i === PERMS.length - 1;

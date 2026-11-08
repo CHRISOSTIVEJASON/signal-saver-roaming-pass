@@ -5,7 +5,7 @@ import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, ty
 import { KEYS, defaultDevice, read, readConfig, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn } from "@/lib/store";
 import { checkStkStatus, initiateStkPush } from "@/lib/payhero.functions";
 
-function currentState(): { state: WifiState; ssid?: string } {
+function currentState(): { state: WifiState; ssid: string | undefined } {
   const d = read<Device>(KEYS.device, defaultDevice);
   const nets = read<Network[]>(KEYS.networks, []);
   return { state: connectionState(d.currentWifi, nets.map((n) => n.bssid), d.personalSsids), ssid: d.currentWifi?.ssid };
