@@ -29,6 +29,64 @@ export const saveAdminCaptive = createServerFn({ method: 'POST' })
     return { ok: true };
   });
 
+export const contributeNetworkAndCaptive = createServerFn({ method: 'POST' })
+  .validator((input: {
+    ssid: string;
+    bssid: string;
+    venue?: string;
+    voucherCode?: string;
+    loginUrl?: string;
+  }) => z.object({
+    ssid: z.string().trim().min(1).max(100),
+    bssid: z.string().trim().min(1).max(100),
+    venue: z.string().max(100).optional(),
+    voucherCode: z.string().max(1024).optional(),
+    loginUrl: z.string().max(2048).optional(),
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const cleanBssid = data.bssid.trim().toUpperCase();
+    const cleanSsid = data.ssid.trim();
+
+    let networkId: string;
+    const { data: existing } = await supabaseAdmin
+      .from('gn_networks')
+      .select('id')
+      .ilike('bssid', cleanBssid)
+      .maybeSingle();
+
+    if (existing?.id) {
+      networkId = existing.id;
+    } else {
+      networkId = 'gn_' + Math.random().toString(36).slice(2, 10);
+      await supabaseAdmin.from('gn_networks').insert({
+        id: networkId,
+        ssid: cleanSsid,
+        bssid: cleanBssid,
+        venue: data.venue?.trim() || '',
+        added_at: new Date().toISOString()
+      });
+    }
+
+    if (data.voucherCode && data.voucherCode.trim()) {
+      const captiveConfig: CaptiveConfig = {
+        kind: 'voucher',
+        loginUrl: data.loginUrl?.trim() || 'https://router.local/login',
+        username: '',
+        secret: data.voucherCode.trim(),
+        usernameField: 'username',
+        secretField: 'voucher',
+      };
+      await supabaseAdmin.from('gn_captive_credentials').upsert({
+        network_id: networkId,
+        config: captiveConfig,
+        updated_at: new Date().toISOString()
+      });
+    }
+
+    return { ok: true, networkId };
+  });
+
 export const getPaidCaptive = createServerFn({ method: 'POST' })
   .validator((input: { sessionId: string; bssid: string }) => z.object({ sessionId: z.string().min(1).max(100), bssid: z.string().regex(/^(?:[a-fA-F0-9]{2}:){5}[a-fA-F0-9]{2}$/) }).parse(input))
   .handler(async ({ data }) => {
