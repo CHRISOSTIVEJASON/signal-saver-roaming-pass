@@ -1,5 +1,6 @@
 # Roadmap
-- [ ] Private admin captive-portal credentials, paid-pass authorization, and Android form sign-in
+- [x] Private admin captive-portal credentials, paid-pass authorization, and Android HTTPS form sign-in; 17 automated tests pass
+- [ ] Verify captive sign-in on Android — needs an authorized admin account, real HTTPS captive portal credentials, and a physical Android device; no app accounts currently exist
 - [x] Global Networks client portal, timer, admin dashboard, PayHero
 - [x] Background peer-assist tracking (simulated) + admin "Mesh Swarm & Relay Activity" monitor
 - [x] Web download gate, permission onboarding/blocker, required-update gate, auto-connect roaming (pool drains, own Wi-Fi saved), one-tap stamping, tabbed admin
