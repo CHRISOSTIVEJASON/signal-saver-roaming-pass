@@ -2,15 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, type WifiState } from "@/lib/rules";
-import { KEYS, defaultDevice, read, useStored, type Device, type Network, type Session } from "@/lib/store";
+import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useServerFn } from "@tanstack/react-start";
-import { startCloudPayment, confirmCloudPayment, heartbeatSession } from "@/lib/cloud.functions";
+import { initiateStkPush, checkStkStatus } from "@/lib/payhero.functions";
 import { relayProvidesConnection } from "@/lib/relay";
-import { useCloudIdentity } from "./CloudSync";
-import { AccountPanel } from "./AccountPanel";
 import { Button } from "./ui/button";
-import { Capacitor } from '@capacitor/core';
-import { CaptiveLogin } from './CaptiveLogin';
+import { Capacitor } from "@capacitor/core";
+import { CaptiveLogin } from "./CaptiveLogin";
 
 function currentState(): { state: WifiState; ssid: string | undefined } {
   const d = read<Device>(KEYS.device, defaultDevice);
@@ -27,14 +25,12 @@ function useWifiState() {
 
 export function ClientPortal() {
   const [activeId, setActiveId] = useStored<string | null>(KEYS.active, null);
-  const [sessions] = useStored<Session[]>(KEYS.sessions, []);
+  const [sessions, setSessions] = useStored<Session[]>(KEYS.sessions, []);
   const [buying, setBuying] = useState(false);
-  const identity = useCloudIdentity();
   const session = sessions.find((s) => s.id === activeId && s.remainingMs > 0) ?? sessions.find((s) => s.remainingMs > 0);
-  if (!identity.signedIn) return <AccountPanel />;
 
-  if (session && !buying) return <ActiveSession session={session} onEnd={() => setBuying(true)} />;
-  return <Purchase onActivated={(s) => { setActiveId(s.id); setBuying(false); }} />;
+  if (session && !buying) return <ActiveSession session={session} setSessions={setSessions} onEnd={() => setBuying(true)} />;
+  return <Purchase onActivated={(s) => { setSessions((p) => [s, ...p]); setActiveId(s.id); setBuying(false); }} />;
 }
 
 function NetworkBadge() {
@@ -48,25 +44,61 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   const [passId, setPassId] = useState<string>("p30");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
   const pass = getPass(passId);
 
-  const startPayment = useServerFn(startCloudPayment);
-  const confirmPayment = useServerFn(confirmCloudPayment);
+  const startPush = useServerFn(initiateStkPush);
+  const checkStatus = useServerFn(checkStkStatus);
+
+  const updateTxn = (id: string, patch: Partial<Txn>) =>
+    setTxns((p) => p.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+
   async function pay() {
     const msisdn = normalizePhone(phone);
     if (!msisdn) { toast.error("Enter a valid Safaricom number (07… or 01…)"); return; }
+    const cfg = read<PayConfig>(KEYS.config, defaultConfig);
+    const live = Boolean(cfg.live && cfg.channelId && (cfg.apiToken || (cfg.username && cfg.password)));
+    const txnId = uid();
+    let ref = "GN" + uid();
+    setTxns((p) => [{ id: txnId, phone: msisdn, amount: pass.amount, passId, ref, at: Date.now(), status: "Pending", mode: live ? "Live" : "Demo" }, ...p]);
+
     try {
-      setBusy("Sending M-Pesa prompt…");
-      const payment = await startPayment({ data: { phone: msisdn, passId: pass.id } });
-      setBusy(payment.live ? "Enter your M-Pesa PIN…" : "Confirming demo payment…");
-      for (let i = 0; i < 30; i++) {
-        await new Promise((resolve) => setTimeout(resolve, payment.live ? 3000 : 1000));
-        const result = await confirmPayment({ data: { id: payment.id } });
-        if (result.session) { onActivated(result.session); toast.success(payment.live ? "Payment received — pass activated!" : "Demo pass activated — no money charged"); return; }
+      if (live) {
+        setBusy("Sending M-Pesa prompt to your phone…");
+        const creds = { apiToken: cfg.apiToken, username: cfg.username, password: cfg.password, channelId: cfg.channelId };
+        const r = await startPush({ data: { ...creds, phone: msisdn, amount: pass.amount, reference: ref } });
+        if (!r.ok) throw new Error(r.error);
+        if (r.reference) ref = r.reference;
+        updateTxn(txnId, { ref });
+        setBusy("Enter your M-Pesa PIN on your phone…");
+        let ok = false;
+        for (let i = 0; i < 30 && !ok; i++) {
+          await new Promise((res) => setTimeout(res, 3000));
+          const st = await checkStatus({ data: { ...creds, reference: ref } });
+          if (st.status === "SUCCESS") { ok = true; if (st.receipt) { ref = st.receipt; updateTxn(txnId, { ref }); } }
+          else if (st.status === "FAILED" || st.status === "CANCELLED") throw new Error("Payment was cancelled or failed");
+        }
+        if (!ok) throw new Error("Payment timed out. Please try again.");
+      } else {
+        setBusy("Sending M-Pesa prompt to your phone…");
+        await new Promise((r) => setTimeout(r, 1200));
+        setBusy("Confirming payment…");
+        await new Promise((r) => setTimeout(r, 1200));
+        ref = "S" + uid() + "K";
+        updateTxn(txnId, { ref });
       }
-      toast.error("Payment is still pending. Check before paying again.");
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Payment failed"); }
-    finally { setBusy(null); }
+      updateTxn(txnId, { status: "Activated" });
+      const now = Date.now();
+      const ms = pass.hours * 3600_000;
+      const s: Session = { id: uid(), phone: msisdn, passId, totalMs: ms, remainingMs: ms, lastTick: now, online: true, startedAt: now };
+      onActivated(s);
+      toast.success(live ? "Payment received — pass activated!" : "Demo pass activated — no money charged");
+    } catch (e) {
+      updateTxn(txnId, { status: "Failed" });
+      toast.error(e instanceof Error ? e.message : "Payment failed");
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -92,40 +124,39 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-70">
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>
-        <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
+        <p className="text-center text-xs text-muted-foreground">You\x27ll get a prompt on your phone. Enter your PIN to confirm.</p>
       </div>
     </div>
   );
 }
 
-function ActiveSession({ session, onEnd }: { session: Session; onEnd: () => void }) {
+function ActiveSession({ session, setSessions, onEnd }: { session: Session; setSessions: (f: (p: Session[]) => Session[]) => void; onEnd: () => void }) {
   const [, force] = useState(0);
   const ref = useRef(session);
   ref.current = session;
   const { state, ssid, direct } = useWifiState();
-  const sendHeartbeat = useServerFn(heartbeatSession);
   const [deviceState] = useStored<Device>(KEYS.device, defaultDevice);
-  const connecting = Capacitor.isNativePlatform() && state === 'pool' && !direct && (!deviceState.captive?.ready || deviceState.captive.bssid !== deviceState.currentWifi?.bssid);
+  const connecting = Capacitor.isNativePlatform() && state === "pool" && !direct && (!deviceState.captive?.ready || deviceState.captive.bssid !== deviceState.currentWifi?.bssid);
+
+  const update = (patch: (s: Session) => Partial<Session>) =>
+    setSessions((p) => p.map((s) => (s.id === ref.current.id ? { ...s, ...patch(s) } : s)));
 
   useEffect(() => {
     const step = () => {
       const now = Date.now();
-      const device = read<Device>(KEYS.device, defaultDevice);
-      const blocked = Capacitor.isNativePlatform() && (!device.captive?.ready || device.captive.bssid !== device.currentWifi?.bssid);
-      void sendHeartbeat({ data: { id: ref.current.id, bssid: blocked ? null : device.currentWifi?.bssid ?? null, relayReady: relayProvidesConnection(device.relay, now) } }).catch(() => toast.error("Pass sync interrupted"));
+      const running = state === "pool" && !connecting;
+      update((s) => ({ remainingMs: tick(s.remainingMs, s.lastTick, now, running), lastTick: now, online: running }));
+      if (ref.current.online) recordRelayTick(ref.current.phone);
       force((n) => n + 1);
     };
     step();
-    const t = setInterval(step, 10_000);
-    const display = setInterval(() => force((n) => n + 1), 1000);
-    return () => { clearInterval(t); clearInterval(display); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id, connecting]);
+    const t = setInterval(step, 1000);
+    return () => clearInterval(t);
+  }, [session.id, state, connecting]);
 
   const remainingMs = tick(session.remainingMs, session.lastTick, Math.min(Date.now(), session.lastTick + 30_000), session.online);
   const pct = (remainingMs / session.totalMs) * 100;
   const pass = getPass(session.passId);
-  const running = state === "pool" && !connecting;
 
   return (
     <div className="space-y-5 text-center">
@@ -137,14 +168,15 @@ function ActiveSession({ session, onEnd }: { session: Session; onEnd: () => void
       {state === "searching" && <span className="inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5" />Time Frozen — searching for network</span>}
       <div>
         <div className="text-xs uppercase tracking-widest text-muted-foreground">Time remaining</div>
-        <div className={`font-mono text-5xl font-bold tabular-nums sm:text-6xl ${running ? "glow-text" : "text-warning"}`}>{formatClock(remainingMs)}</div>
+        <div className={`font-mono text-5xl font-bold tabular-nums sm:text-6xl ${session.online ? "glow-text" : "text-warning"}`}>
+          {formatClock(remainingMs)}
+        </div>
         <div className="mt-1 text-sm text-muted-foreground">{pass.label} • +{session.phone}</div>
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className={`h-full transition-all ${running ? "bg-primary" : "bg-warning"}`} style={{ width: `${pct}%` }} />
+        <div className={`h-full transition-all ${session.online ? "bg-primary" : "bg-warning"}`} style={{ width: `${pct}%` }} />
       </div>
-      <p className="text-xs text-muted-foreground">Your time only counts down while you're on a Global Networks hotspot. No password needed — we connect you automatically.</p>
-      <Button onClick={onEnd} className="text-xs text-muted-foreground underline-offset-4 hover:underline">Buy another pass</Button>
+      <Button variant="ghost" onClick={onEnd} className="text-xs text-muted-foreground underline-offset-4 hover:underline">Buy another pass</Button>
     </div>
   );
 }

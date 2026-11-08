@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X } from "lucide-react";
 import { toast } from "sonner";
 import { APP_VERSION, changePasscode, formatClock, getPass, tick } from "@/lib/rules";
 import { Button } from "./ui/button";
@@ -7,7 +7,7 @@ import type { MeshLink } from "@/lib/relay";
 import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
 import { saveShared } from '@/lib/cloud-cache';
 import { useConfig, useDevice } from "@/components/Gates";
-import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn } from "@/lib/store";
+import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, type Network, type PayConfig, type Session, type Txn, getPasscode } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
@@ -80,7 +80,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
             ])} />
         </Panel>
       </>)}
-      {tab === "set" && (<><AppSettingsCard /></>)}
+      {tab === "set" && (<div className="space-y-4"><PasscodeCard /><AppSettingsCard /></div>)}
     </div>
   );
 }
@@ -145,13 +145,32 @@ function Secret({ value, onChange, placeholder }: { value: string; onChange: (v:
 function PayHeroCard() {
   const [saved, setSaved] = useConfig();
   const [c, setC] = useState(saved);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [passcode, setPasscode] = useState("");
+
   useEffect(() => setC(saved), [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (k: keyof PayConfig) => (v: string | boolean) => setC({ ...c, [k]: v });
-  const save = () => {
-    if (c.live && !saved.live && (!c.channelId || !(c.apiToken || (c.username && c.password))))
-      { toast.error("Live mode needs a Channel ID and either an API token or username + password"); return; }
-    setSaved(c); toast.success("PayHero settings saved");
+
+  const handleSaveClick = () => {
+    if (c.live && (!c.channelId || !(c.apiToken || (c.username && c.password)))) {
+      toast.error("Live mode needs a Channel ID and either an API token or username + password");
+      return;
+    }
+    setAuthOpen(true);
   };
+
+  const confirmSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passcode !== getPasscode()) {
+      toast.error("Incorrect master passcode");
+      return;
+    }
+    setSaved(c);
+    toast.success("PayHero settings saved");
+    setAuthOpen(false);
+    setPasscode("");
+  };
+
   return (
     <Panel title="PayHero Configuration" icon={<KeyRound className="h-4 w-4" />}>
       <div className="space-y-3">
@@ -169,8 +188,27 @@ function PayHeroCard() {
           <Field label="Password"><Secret value={c.password} onChange={set("password")} /></Field>
         </div>
         <Field label="Channel ID"><input className={inputCls} inputMode="numeric" value={c.channelId} onChange={(e) => set("channelId")(e.target.value)} /></Field>
-        <Button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save Configuration</Button>
+        <Button onClick={handleSaveClick} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save Configuration</Button>
       </div>
+
+      {authOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => { setAuthOpen(false); setPasscode(""); }}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-base">Authorize PayHero Update</h3>
+              <Button variant="ghost" size="icon" onClick={() => { setAuthOpen(false); setPasscode(""); }} aria-label="Close"><X className="h-4 w-4" /></Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Enter master passcode to confirm updating PayHero credentials.</p>
+            <form onSubmit={confirmSave} className="space-y-4">
+              <Secret value={passcode} onChange={setPasscode} placeholder="Enter master passcode" />
+              <div className="flex gap-2">
+                <Button type="button" onClick={() => { setAuthOpen(false); setPasscode(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
+                <Button type="submit" className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">Authorize & Save</Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </Panel>
   );
 }
