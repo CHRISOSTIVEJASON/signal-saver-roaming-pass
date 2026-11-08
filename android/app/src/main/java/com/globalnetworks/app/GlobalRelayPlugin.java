@@ -12,6 +12,16 @@ import android.net.Uri;
 import com.getcapacitor.*;
 import com.getcapacitor.annotation.*;
 import java.util.*;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import java.net.URL;
+import java.net.HttpURLConnection;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.io.OutputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @CapacitorPlugin(name="GlobalRelay", permissions={
  @Permission(alias="location",strings={Manifest.permission.ACCESS_FINE_LOCATION}),
@@ -22,6 +32,7 @@ public class GlobalRelayPlugin extends Plugin {
  private WifiAwareSession awareSession; private PublishDiscoverySession publication;
  private BroadcastReceiver receiver; private boolean started=false, upstream=false;
  private JSObject relay; private final String networkName="DIRECT-GLOBAL-NETWORKS";
+ private final ExecutorService portalExecutor=Executors.newSingleThreadExecutor();
  @Override public void load(){
   manager=(WifiP2pManager)getContext().getSystemService(Context.WIFI_P2P_SERVICE);
   if(manager!=null)channel=manager.initialize(getContext(),Looper.getMainLooper(),null);
@@ -87,11 +98,62 @@ public class GlobalRelayPlugin extends Plugin {
     relay=link;emit();
   });
  }
+ private boolean matchesWifi(Network network, String bssid){
+  ConnectivityManager connectivity=(ConnectivityManager)getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+  NetworkCapabilities caps=connectivity.getNetworkCapabilities(network);
+  WifiManager wifi=(WifiManager)getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+  return caps!=null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) && wifi!=null && bssid.equalsIgnoreCase(wifi.getConnectionInfo().getBSSID());
+ }
+ @PluginMethod public void submitCaptivePortal(PluginCall call){
+  if(!granted()){call.reject("Wi-Fi access required");return;}
+  final String bssid=call.getString("bssid", "");
+  final String destination=call.getString("loginUrl", "");
+  final JSObject fields=call.getObject("fields");
+  portalExecutor.execute(()->{
+   HttpURLConnection connection=null;
+   try {
+    URL url=new URL(destination);
+    if(!"https".equals(url.getProtocol()) || url.getUserInfo()!=null || url.getRef()!=null || fields==null || fields.length()<1 || fields.length()>2 || !bssid.matches("(?i)([0-9a-f]{2}:){5}[0-9a-f]{2}"))throw new Exception();
+    ConnectivityManager connectivity=(ConnectivityManager)getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+    Network wifiNetwork=null;
+    for(Network candidate:connectivity.getAllNetworks()){
+     if(matchesWifi(candidate,bssid)){wifiNetwork=candidate;break;}
+    }
+    if(wifiNetwork==null)throw new Exception();
+    StringBuilder body=new StringBuilder();Iterator<String> keys=fields.keys();
+    while(keys.hasNext()){
+     String key=keys.next(), value=fields.getString(key);
+     if(!key.matches("[a-zA-Z0-9_.-]{1,80}") || value.length()>1024)throw new Exception();
+     if(body.length()>0)body.append('&');
+     body.append(URLEncoder.encode(key,"UTF-8")).append('=').append(URLEncoder.encode(value,"UTF-8"));
+    }
+    connection=(HttpURLConnection)wifiNetwork.openConnection(url);
+    connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(10000);connection.setReadTimeout(10000);
+    connection.setRequestMethod("POST");connection.setDoOutput(true);
+    connection.setRequestProperty("Content-Type","application/x-www-form-urlencoded; charset=UTF-8");
+    byte[] bytes=body.toString().getBytes(StandardCharsets.UTF_8);connection.setFixedLengthStreamingMode(bytes.length);
+    if(!matchesWifi(wifiNetwork,bssid))throw new Exception();
+    try(OutputStream output=connection.getOutputStream()){output.write(bytes);}
+    int status=connection.getResponseCode();
+    if(status<200 || status>=400)throw new Exception();
+    // A portal's HTTP 200 or redirect is not proof of working internet.
+    boolean validated=false;
+    for(int attempt=0;attempt<5;attempt++){
+     if(!matchesWifi(wifiNetwork,bssid))throw new Exception();
+     NetworkCapabilities caps=connectivity.getNetworkCapabilities(wifiNetwork);
+     if(caps!=null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) && !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)){validated=true;break;}
+     Thread.sleep(1000);
+    }
+    JSObject result=new JSObject();result.put("validated",validated);call.resolve(result);
+   }catch(Exception error){call.reject("Network sign-in could not be verified");}
+   finally{if(connection!=null)connection.disconnect();}
+  });
+ }
  @PluginMethod public void stop(PluginCall call){shutdown();call.resolve();}
  private void shutdown(){
   if(manager!=null&&channel!=null&&granted()){manager.stopPeerDiscovery(channel,null);manager.clearLocalServices(channel,null);manager.clearServiceRequests(channel,null);manager.removeGroup(channel,null);}
   if(publication!=null){publication.close();publication=null;}if(awareSession!=null){awareSession.close();awareSession=null;}
   getContext().stopService(new Intent(getContext(),RelayService.class));started=false;relay=null;
  }
- @Override protected void handleOnDestroy(){shutdown();if(receiver!=null)getContext().unregisterReceiver(receiver);if(channel!=null&&Build.VERSION.SDK_INT>=27)channel.close();}
+ @Override protected void handleOnDestroy(){portalExecutor.shutdownNow();shutdown();if(receiver!=null)getContext().unregisterReceiver(receiver);if(channel!=null&&Build.VERSION.SDK_INT>=27)channel.close();}
 }

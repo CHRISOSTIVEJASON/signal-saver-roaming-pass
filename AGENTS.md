@@ -33,3 +33,5 @@ use the editor.
 - Keep administrator privileges in protected user_roles; no browser passcode or first-user bootstrap may grant Cloud authority.
 - Capacitor loads the published HTTPS app with a registered Android plugin; keep native calls behind platform checks to preserve web SSR.
 - Native group negotiation must report transport readiness separately from local connectivity because P2P is not internet forwarding.
+- Store captive credentials separately from public networks; admin-only access and an owned unexpired pass with activated live payment gate retrieval, so demo payments cannot release real network secrets.
+- Captive sign-in uses Android Wi-Fi-bound HTTPS form POST with redirects disabled and Android validated-internet confirmation; keep credentials transient and never persist them in browser caches, because Cloud cannot reach a customer's local captive network.

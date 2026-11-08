@@ -9,6 +9,8 @@ import { relayProvidesConnection } from "@/lib/relay";
 import { useCloudIdentity } from "./CloudSync";
 import { AccountPanel } from "./AccountPanel";
 import { Button } from "./ui/button";
+import { Capacitor } from '@capacitor/core';
+import { CaptiveLogin } from './CaptiveLogin';
 
 function currentState(): { state: WifiState; ssid: string | undefined } {
   const d = read<Device>(KEYS.device, defaultDevice);
@@ -102,12 +104,15 @@ function ActiveSession({ session, onEnd }: { session: Session; onEnd: () => void
   ref.current = session;
   const { state, ssid, direct } = useWifiState();
   const sendHeartbeat = useServerFn(heartbeatSession);
+  const [deviceState] = useStored<Device>(KEYS.device, defaultDevice);
+  const connecting = Capacitor.isNativePlatform() && state === 'pool' && !direct && (!deviceState.captive?.ready || deviceState.captive.bssid !== deviceState.currentWifi?.bssid);
 
   useEffect(() => {
     const step = () => {
       const now = Date.now();
       const device = read<Device>(KEYS.device, defaultDevice);
-      void sendHeartbeat({ data: { id: ref.current.id, bssid: device.currentWifi?.bssid ?? null, relayReady: relayProvidesConnection(device.relay, now) } }).catch(() => toast.error("Pass sync interrupted"));
+      const blocked = Capacitor.isNativePlatform() && (!device.captive?.ready || device.captive.bssid !== device.currentWifi?.bssid);
+      void sendHeartbeat({ data: { id: ref.current.id, bssid: blocked ? null : device.currentWifi?.bssid ?? null, relayReady: relayProvidesConnection(device.relay, now) } }).catch(() => toast.error("Pass sync interrupted"));
       force((n) => n + 1);
     };
     step();
@@ -115,17 +120,19 @@ function ActiveSession({ session, onEnd }: { session: Session; onEnd: () => void
     const display = setInterval(() => force((n) => n + 1), 1000);
     return () => { clearInterval(t); clearInterval(display); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session.id]);
+  }, [session.id, connecting]);
 
   const remainingMs = tick(session.remainingMs, session.lastTick, Math.min(Date.now(), session.lastTick + 30_000), session.online);
   const pct = (remainingMs / session.totalMs) * 100;
   const pass = getPass(session.passId);
-  const running = state === "pool";
+  const running = state === "pool" && !connecting;
 
   return (
     <div className="space-y-5 text-center">
+      <CaptiveLogin sessionId={session.id} />
+      {connecting && <span className="inline-flex items-center gap-2 text-sm text-warning"><Loader2 className="h-4 w-4 animate-spin" />Connecting — your time is preserved</span>}
       {direct && <span className="inline-flex items-center justify-center gap-2 text-sm text-primary"><Signal className="h-5 w-5 shrink-0" />Connected to GLOBAL NETWORKS (High-Speed Direct Relay)</span>}
-      {state === "pool" && !direct && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}
+      {state === "pool" && !direct && !connecting && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}
       {state === "personal" && <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent"><Home className="h-3.5 w-3.5" />On your own Wi-Fi — your pass time is saved</span>}
       {state === "searching" && <span className="inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5" />Time Frozen — searching for network</span>}
       <div>
