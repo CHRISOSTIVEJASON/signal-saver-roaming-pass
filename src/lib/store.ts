@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_PASSCODE } from "./rules";
+import { cached, isSharedKey, saveShared, useCached } from "./cloud-cache";
+import type { MeshLink } from "./relay";
+import { toast } from "sonner";
 
 export type PayConfig = {
   apiToken: string;
@@ -20,6 +23,7 @@ export type Device = {
   perms: { background: Perm; wifi: Perm; relay: Perm };
   currentWifi: WifiInfo | null;
   personalSsids: string[];
+  relay?: MeshLink | null;
 };
 export const defaultDevice: Device = {
   appMode: false, onboarded: false,
@@ -57,12 +61,14 @@ export const KEYS = {
   active: "gn_active_session",
   relay: "gn_relay",
   device: "gn_device",
+  mesh: "gn_mesh_links",
 };
 
 export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "", latestVersion: "1.0.0", updateRequired: false };
 export const readConfig = (): PayConfig => ({ ...defaultConfig, ...read<Partial<PayConfig>>(KEYS.config, {}) });
 
 export function read<T>(key: string, fallback: T): T {
+  if (isSharedKey(key)) return cached(key, fallback);
   if (typeof window === "undefined") return fallback;
   try {
     const v = localStorage.getItem(key);
@@ -72,12 +78,14 @@ export function read<T>(key: string, fallback: T): T {
   }
 }
 export function write<T>(key: string, v: T) {
+  if (isSharedKey(key)) { void saveShared(key, v).catch((error) => toast.error(error.message)); return; }
   localStorage.setItem(key, JSON.stringify(v));
   window.dispatchEvent(new CustomEvent("gn-store", { detail: key }));
 }
 
 /** localStorage-backed state, read after hydration to avoid SSR mismatches. */
 export function useStored<T>(key: string, fallback: T) {
+  const cloudVal = useCached(key, fallback);
   const [val, setVal] = useState<T>(fallback);
   useEffect(() => {
     setVal(read(key, fallback));
@@ -97,13 +105,14 @@ export function useStored<T>(key: string, fallback: T) {
     (next: T | ((p: T) => T)) => {
       const cur = read(key, fallback);
       const v = typeof next === "function" ? (next as (p: T) => T)(cur) : next;
+      if (isSharedKey(key)) { void saveShared(key, v).catch((error) => toast.error(error.message)); return; }
       write(key, v);
       setVal(v);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
   );
-  return [val, set] as const;
+  return [isSharedKey(key) ? cloudVal : val, set] as const;
 }
 
 export const getPasscode = () => read(KEYS.passcode, DEFAULT_PASSCODE);
@@ -115,6 +124,7 @@ export const emptyRelay: RelayLog = { assistedKb: 0, receivedKb: 0, events: [] }
 
 /** Simulated background peer-assist: called once per second while a pass is online. */
 export function recordRelayTick(phone: string) {
+  if (read<Device>(KEYS.device, defaultDevice).relay?.source === "native") return;
   if (Math.random() > 0.35) return;
   const log = read<RelayLog>(KEYS.relay, emptyRelay);
   const nets = read<Network[]>(KEYS.networks, []);
