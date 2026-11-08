@@ -8,6 +8,23 @@ export type PayConfig = {
   channelId: string;
   live: boolean;
   apkUrl: string;
+  latestVersion: string;
+  updateRequired: boolean;
+};
+export type Perm = "unset" | "granted" | "denied";
+export type WifiInfo = { ssid: string; bssid: string };
+/** Simulated Android device state (a web page cannot read real Wi-Fi or permissions). */
+export type Device = {
+  appMode: boolean;
+  onboarded: boolean;
+  perms: { background: Perm; wifi: Perm; relay: Perm };
+  currentWifi: WifiInfo | null;
+  personalSsids: string[];
+};
+export const defaultDevice: Device = {
+  appMode: false, onboarded: false,
+  perms: { background: "unset", wifi: "unset", relay: "unset" },
+  currentWifi: null, personalSsids: ["My Home Wi-Fi"],
 };
 export type Network = { id: string; ssid: string; bssid: string; venue: string; addedAt: number };
 export type Session = {
@@ -39,9 +56,11 @@ export const KEYS = {
   txns: "gn_txns",
   active: "gn_active_session",
   relay: "gn_relay",
+  device: "gn_device",
 };
 
-export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "" };
+export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "", latestVersion: "1.0.0", updateRequired: false };
+export const readConfig = (): PayConfig => ({ ...defaultConfig, ...read<Partial<PayConfig>>(KEYS.config, {}) });
 
 export function read<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;

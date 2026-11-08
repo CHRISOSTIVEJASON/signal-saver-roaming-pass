@@ -22,3 +22,23 @@ describe("rules", () => {
     expect(normalizePhone("12345")).toBeNull();
   });
 });
+
+import { connectionState, isUpdateRequired } from "@/lib/rules";
+describe("roaming + updates", () => {
+  const pool = ["AA:BB:CC:DD:EE:FF"];
+  it("drains only on stamped pool Wi-Fi", () => {
+    expect(connectionState({ ssid: "Mall", bssid: "aa:bb:cc:dd:ee:ff" }, pool, [])).toBe("pool");
+  });
+  it("never drains on the user's own saved Wi-Fi", () => {
+    expect(connectionState({ ssid: "Home", bssid: "11:22:33:44:55:66" }, pool, ["Home"])).toBe("personal");
+  });
+  it("freezes when not on pool Wi-Fi", () => {
+    expect(connectionState(null, pool, [])).toBe("searching");
+    expect(connectionState({ ssid: "Cafe", bssid: "11:22:33:44:55:77" }, pool, [])).toBe("searching");
+  });
+  it("blocks only for a required, newer version", () => {
+    expect(isUpdateRequired("1.0.0", "1.1.0", true)).toBe(true);
+    expect(isUpdateRequired("1.0.0", "1.1.0", false)).toBe(false);
+    expect(isUpdateRequired("1.0.0", "1.0.0", true)).toBe(false);
+  });
+});
