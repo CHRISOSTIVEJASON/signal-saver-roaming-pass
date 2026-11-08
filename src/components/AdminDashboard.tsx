@@ -343,7 +343,7 @@ function PasscodeCard() {
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!securityCode.trim()) {
-      toast.error("Please enter master security code (2006)");
+      toast.error("Please enter master security code");
       return;
     }
     const check = changePasscode(securityCode.trim(), newPasscode.trim());
@@ -368,11 +368,11 @@ function PasscodeCard() {
   return (
     <Panel title="Admin Master Passcode" icon={<KeyRound className="h-4 w-4" />}>
       <form onSubmit={handleUpdate} className="space-y-3">
-        <Field label="Master Security Code (Default: 2006)">
+        <Field label="Master Security Code">
           <input
             type="password"
             className={inputCls}
-            placeholder="Enter security code 2006"
+            placeholder="Enter master security code"
             value={securityCode}
             onChange={(e) => setSecurityCode(e.target.value)}
           />
@@ -381,7 +381,7 @@ function PasscodeCard() {
           <input
             type="password"
             className={inputCls + " font-mono"}
-            placeholder="e.g. 2006"
+            placeholder="Enter new passcode (4-8 digits)"
             value={newPasscode}
             onChange={(e) => setNewPasscode(e.target.value)}
           />
