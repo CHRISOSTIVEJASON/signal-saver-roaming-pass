@@ -28,3 +28,4 @@ use the editor.
   own key and store it in Secrets.
 - **Secrets.** Lovable manages them. Do not put secret values in the repo.
 <!-- LOVABLE:END -->
+- Wi-Fi, Android permissions and app mode are simulated via the Device record (gn_device) + Test controls drawer; browsers can't read them, a native wrapper must feed real values there.
