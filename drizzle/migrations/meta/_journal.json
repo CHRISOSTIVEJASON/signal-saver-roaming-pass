@@ -8,6 +8,13 @@
       "when": 1794106462772,
       "tag": "0000_global_networks_shared_core",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794106664387,
+      "tag": "0001_restrict_role_lookup",
+      "breakpoints": true
     }
   ]
 }
