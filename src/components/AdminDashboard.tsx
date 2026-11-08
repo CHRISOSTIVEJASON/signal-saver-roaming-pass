@@ -226,7 +226,7 @@ function PayHeroCard() {
             username: prev.username || remote.username,
             password: prev.password || remote.password,
             channelId: prev.channelId || remote.channelId,
-            live: remote.live !== undefined ? remote.live : prev.live,
+            live: remote.live !== undefined ? Boolean(remote.live) : prev.live,
           }));
           setSaved((prev) => ({
             ...prev,
@@ -234,7 +234,7 @@ function PayHeroCard() {
             username: prev.username || remote.username,
             password: prev.password || remote.password,
             channelId: prev.channelId || remote.channelId,
-            live: remote.live !== undefined ? remote.live : prev.live,
+            live: remote.live !== undefined ? Boolean(remote.live) : prev.live,
           }));
         }
       })

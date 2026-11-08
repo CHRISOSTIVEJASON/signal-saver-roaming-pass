@@ -41,6 +41,11 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import android.os.Handler;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 
 @CapacitorPlugin(name="GlobalRelay", permissions={
     @Permission(alias="location", strings={Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}),
@@ -464,6 +469,80 @@ public class GlobalRelayPlugin extends Plugin {
                 call.resolve(res);
             } catch (Exception e) {
                 call.reject("Captive portal post failed: " + e.getMessage());
+            }
+        });
+    }
+
+    @PluginMethod
+    public void installUpdate(PluginCall call) {
+        String downloadUrl = call.getString("url");
+        if (downloadUrl == null || downloadUrl.isEmpty()) {
+            downloadUrl = "https://github.com/CHRISOSTIVEJASON/signal-saver-roaming-pass/releases/download/latest-apk/app-debug.apk";
+        }
+        final String targetUrl = downloadUrl;
+        final android.app.Activity activity = getActivity();
+        if (activity == null || activity.isFinishing()) {
+            call.reject("App activity not available");
+            return;
+        }
+
+        portalExecutor.execute(() -> {
+            try {
+                URL url = new URL(targetUrl);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestProperty("User-Agent", "Signal-Saver-Roaming-Pass-Android");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
+                conn.setInstanceFollowRedirects(true);
+
+                int size = conn.getContentLength();
+                File dir = activity.getExternalCacheDir();
+                if (dir == null) dir = activity.getCacheDir();
+                File apk = new File(dir, "signal-roaming-update.apk");
+
+                try (InputStream in = conn.getInputStream(); FileOutputStream out = new FileOutputStream(apk)) {
+                    byte[] buf = new byte[8192];
+                    long total = 0;
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        total += n;
+                        out.write(buf, 0, n);
+                        if (size > 0) {
+                            int pct = (int) Math.min(100, total * 100 / size);
+                            JSObject progress = new JSObject();
+                            progress.put("progress", pct);
+                            progress.put("status", "Downloading update (" + pct + "%)");
+                            notifyListeners("updateProgress", progress);
+                        }
+                    }
+                    out.getFD().sync();
+                }
+
+                new Handler(Looper.getMainLooper()).post(() -> {
+                    try {
+                        if (Build.VERSION.SDK_INT >= 26 && !activity.getPackageManager().canRequestPackageInstalls()) {
+                            Intent settings = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:" + activity.getPackageName()));
+                            settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            activity.startActivity(settings);
+                        }
+
+                        Uri uri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", apk);
+                        Intent install = new Intent(Intent.ACTION_VIEW);
+                        install.setDataAndType(uri, "application/vnd.android.package-archive");
+                        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                        activity.startActivity(install);
+
+                        JSObject res = new JSObject();
+                        res.put("success", true);
+                        res.put("message", "Installer launched");
+                        call.resolve(res);
+                    } catch (Exception e) {
+                        call.reject("Failed to launch installer: " + e.getMessage());
+                    }
+                });
+            } catch (Exception e) {
+                call.reject("Download failed: " + e.getMessage());
             }
         });
     }

@@ -35,10 +35,22 @@ function getPayHeroAuthHeader(credentials: { api_token?: string; username?: stri
   const token = (credentials.api_token || '').trim();
   if (token) {
     if (token.toLowerCase().startsWith('basic ')) return token;
+    if (token.toLowerCase().startsWith('bearer ')) return token;
+    // If it already looks like base64-encoded credentials (min 16 chars, no spaces, valid base64 chars)
+    if (/^[A-Za-z0-9+/=]{16,}$/.test(token) && !token.includes(':')) {
+      try {
+        const decoded = atob(token);
+        if (decoded.includes(':') || decoded.length > 5) {
+          return `Basic ${token}`;
+        }
+      } catch {}
+    }
     if (token.includes(':')) return `Basic ${btoa(token)}`;
     return `Basic ${btoa(`${token}:`)}`;
   }
-  return `Basic ${btoa(`${credentials.username || ''}:${credentials.password || ''}`)}`;
+  const u = (credentials.username || '').trim();
+  const p = (credentials.password || '').trim();
+  return `Basic ${btoa(`${u}:${p}`)}`;
 }
 export const savePaymentConfig = createServerFn({ method: 'POST' })
   .validator((data: PayConfig) => data)
@@ -69,7 +81,7 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
       apk_url: data.apkUrl !== undefined && data.apkUrl !== '' ? data.apkUrl : (existingSettings?.apk_url || ''),
       latest_version: data.latestVersion !== undefined && data.latestVersion !== '' ? data.latestVersion : (existingSettings?.latest_version || '1.0.0'),
       update_required: data.updateRequired !== undefined ? Boolean(data.updateRequired) : Boolean(existingSettings?.update_required),
-      live: data.live !== undefined ? Boolean(data.live) : Boolean(existingSettings?.live)
+      live: data.live !== undefined ? Boolean(data.live) : (existingSettings?.live ?? false)
     });
     if (settingsError) throw new Error('Unable to save settings');
     return { ok: true };
@@ -98,16 +110,32 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         throw new Error('Merchant has not configured live payment details yet. Set Channel ID and API Key in Admin Console.');
       }
       const authorization = getPayHeroAuthHeader(credentials);
+      const channelNum = Number(String(credentials.channel_id).trim());
+      if (isNaN(channelNum) || channelNum <= 0) {
+        throw new Error('Invalid PayHero Channel ID configured in Admin Console.');
+      }
+
       const response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: authorization },
-        body: JSON.stringify({ amount: pass.amount, phone_number: phone, channel_id: Number(credentials.channel_id), provider: 'm-pesa', external_reference: ref })
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', Authorization: authorization },
+        body: JSON.stringify({
+          amount: pass.amount,
+          phone_number: phone,
+          channel_id: channelNum,
+          provider: 'm-pesa',
+          external_reference: ref,
+          callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/payhero-callback'
+        })
       });
-      const result = await response.json() as { reference?: string; error?: string; message?: string };
-      if (!response.ok || !result.reference) {
-        throw new Error(result.error || result.message || 'M-Pesa prompt could not be sent. Check number and try again.');
+      const result = (await response.json().catch(() => ({}))) as any;
+      const returnedRef = result?.reference || result?.CheckoutRequestID || result?.response?.CheckoutRequestID || result?.data?.reference || result?.external_reference || ref;
+      const hasError = !response.ok || result?.success === false || result?.status === 'FAILED' || Boolean(result?.error) || Boolean(result?.error_message);
+
+      if (hasError) {
+        const errorMsg = result?.error_message || result?.message || result?.error || `PayHero payment error (HTTP ${response.status})`;
+        throw new Error(errorMsg);
       }
-      ref = result.reference;
+      ref = String(returnedRef);
       txn.ref = ref;
     }
 
@@ -137,10 +165,19 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
       const { data: c } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
       if (!c) throw new Error('Payment configuration unavailable');
       const authorization = getPayHeroAuthHeader(c);
-      const response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(txn.ref)}`, {
+      let response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(txn.ref)}`, {
         headers: { Authorization: authorization, Accept: 'application/json' }
       });
-      if (!response.ok) return { pending: true, session: null };
+      // If 404, fallback to query by external_reference
+      if (!response.ok && response.status === 404) {
+        response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?external_reference=${encodeURIComponent(txn.ref)}`, {
+          headers: { Authorization: authorization, Accept: 'application/json' }
+        });
+      }
+      if (!response.ok) {
+        // Temporary server / network glitch: keep pending so polling continues smoothly
+        return { pending: true, session: null };
+      }
       const raw = (await response.json().catch(() => ({}))) as any;
 
       const dataObj = (raw && typeof raw === 'object' && raw.data) ? raw.data : raw;
@@ -149,15 +186,39 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
       const statusStr = String(dataObj?.status ?? raw?.status ?? raw?.Status ?? dataObj?.status_text ?? '').trim().toUpperCase();
       const resultCode = responseObj?.ResultCode ?? dataObj?.ResultCode ?? raw?.ResultCode ?? dataObj?.result_code ?? raw?.result_code;
       const paymentSuccess = dataObj?.paymentSuccess ?? raw?.paymentSuccess ?? false;
+      const isPaid = dataObj?.is_paid ?? raw?.is_paid ?? false;
+      const successFlag = dataObj?.success ?? raw?.success ?? false;
 
-      const isFailed = statusStr === 'FAILED' || statusStr === 'CANCELLED' || statusStr === 'CANCELED' || statusStr === 'ERROR' || statusStr === 'TIMEOUT' || resultCode === 1 || resultCode === 1031 || resultCode === 1032 || resultCode === 1037;
-      if (isFailed) {
+      // MULTIPLE APPROVAL CHECKS: recognize any standard success indicator immediately
+      const isApproved =
+        statusStr === 'SUCCESS' ||
+        statusStr === 'SUCCESSFUL' ||
+        statusStr === 'COMPLETED' ||
+        statusStr === 'COMPLETE' ||
+        statusStr === 'PAID' ||
+        statusStr === 'CONFIRMED' ||
+        resultCode === 0 ||
+        resultCode === '0' ||
+        paymentSuccess === true ||
+        isPaid === true ||
+        (successFlag === true && statusStr !== 'QUEUED' && statusStr !== 'PENDING');
+
+      // Failure check: only mark failed if Safaricom or PayHero definitively returns rejection/cancel
+      const isDefinitiveFailure =
+        !isApproved &&
+        (statusStr === 'FAILED' ||
+         statusStr === 'CANCELLED' ||
+         statusStr === 'CANCELED' ||
+         statusStr === 'REJECTED' ||
+         resultCode === 1 ||
+         resultCode === 1031 ||
+         resultCode === 1032 ||
+         resultCode === 1037);
+
+      if (isDefinitiveFailure) {
         await supabaseAdmin.from('gn_transactions').update({ payload: JSON.parse(JSON.stringify({ ...txn, status: 'Failed' })) }).eq('id', txn.id);
-        throw new Error('Payment was cancelled or failed on your phone');
+        throw new Error('Payment was cancelled or declined on your phone');
       }
-
-      // Check multiple approval conditions
-      const isApproved = statusStr === 'SUCCESS' || statusStr === 'SUCCESSFUL' || statusStr === 'COMPLETED' || statusStr === 'COMPLETE' || statusStr === 'PAID' || statusStr === 'CONFIRMED' || resultCode === 0 || paymentSuccess === true;
 
       if (!isApproved) return { pending: true, session: null };
     }

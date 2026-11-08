@@ -3,6 +3,7 @@ import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin } fro
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, type WifiState } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
+import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
 import { startCloudPayment, confirmCloudPayment, restoreCloudPass } from "@/lib/cloud.functions";
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
@@ -82,6 +83,7 @@ function NetworkBadge() {
 }
 
 function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
+  const [cfg] = useConfig();
   const [passId, setPassId] = useState<string>("p30");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -101,7 +103,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   async function pay() {
     const msisdn = normalizePhone(phone);
     if (!msisdn) { toast.error("Enter a valid Safaricom number (07… or 01…)"); return; }
-    
+
     setBusy("Sending M-Pesa prompt to your phone…");
     const deviceId = getDeviceId();
     let currentTxnId = uid();
@@ -112,30 +114,48 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
       setTxns((p) => [{ id: r.id, phone: msisdn, amount: pass.amount, passId, ref, at: Date.now(), status: "Pending", mode: r.live ? "Live" : "Demo" }, ...p]);
 
       if (r.live) {
-        setBusy("Enter your M-Pesa PIN on your phone…");
+        setBusy("Prompt sent! Enter your M-Pesa PIN on your phone…");
         let ok = false;
         let activatedSession: Session | null = null;
+        // Poll for up to 90 seconds (60 iterations @ 1.5s interval)
         for (let i = 0; i < 60 && !ok; i++) {
           if (i > 0) {
             await new Promise((res) => setTimeout(res, 1500));
           }
-          const st = await confirmPayment({ data: { id: r.id, deviceId } });
-          if (!st.pending && st.session) {
-            ok = true;
-            activatedSession = st.session;
+          if (i === 10) setBusy("Awaiting M-Pesa PIN approval…");
+          if (i === 25) setBusy("Verifying with Safaricom Daraja gateway…");
+
+          try {
+            const st = await confirmPayment({ data: { id: r.id, deviceId } });
+            if (!st.pending && st.session) {
+              ok = true;
+              activatedSession = st.session;
+              break;
+            }
+          } catch (pollErr: any) {
+            // Transient network blips or temporary gateway lags must NOT kill the polling loop!
+            const errMsg = String(pollErr?.message || "").toLowerCase();
+            if (errMsg.includes("cancelled") || errMsg.includes("declined") || errMsg.includes("wrong pin")) {
+              throw pollErr;
+            }
+            console.warn("Polling status notice, continuing loop:", pollErr);
           }
         }
-        if (!ok || !activatedSession) throw new Error("Payment timed out waiting for PIN. If you completed payment on your phone, tap 'Restore Active Pass'.");
+        if (!ok || !activatedSession) {
+          throw new Error("Payment verification taking longer than expected. If you entered your PIN, tap 'Restore Active Pass' below.");
+        }
+        setBusy("M-Pesa confirmed! Activating high-speed pass…");
         updateTxn(r.id, { status: "Activated" });
         onActivated(activatedSession);
-        toast.success("Payment received — pass activated!");
+        toast.success("Payment confirmed! High-speed pass activated.");
       } else {
-        setBusy("Confirming demo pass…");
+        setBusy("Activating Demo pass (Test mode)…");
+        await new Promise((res) => setTimeout(res, 800));
         const st = await confirmPayment({ data: { id: r.id, deviceId } });
         if (!st.session) throw new Error("Demo pass could not be activated");
         updateTxn(r.id, { status: "Activated" });
         onActivated(st.session);
-        toast.success("Demo pass activated — no money charged");
+        toast.success("Demo pass activated — no money charged (Test mode)");
       }
     } catch (e) {
       updateTxn(currentTxnId, { status: "Failed" });
@@ -169,7 +189,19 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-center"><NetworkBadge /></div>
+      <div className="flex flex-col items-center justify-center gap-2">
+        <NetworkBadge />
+        {cfg.live ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-primary font-medium">
+            <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+            Live M-Pesa STK Push
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-[11px] text-amber-500 font-medium">
+            ⚡ Demo Mode (Admin can activate Live in Console)
+          </span>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-3">
         {PASSES.map((p) => (
           <Button variant="outline" disabled={Boolean(busy)} key={p.id} onClick={() => setPassId(p.id)}

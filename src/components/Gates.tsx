@@ -59,13 +59,108 @@ export function DownloadGate() {
 
 export function UpdateGate() {
   const [cfg] = useConfig();
+  const [status, setStatus] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number>(0);
+  const [error, setError] = useState<string | null>(null);
+  const [completed, setCompleted] = useState<boolean>(false);
+
+  useEffect(() => {
+    let handle: any = null;
+    if (Capacitor.isNativePlatform()) {
+      GlobalRelay.addListener("updateProgress", (data: { progress: number; status: string }) => {
+        if (typeof data.progress === "number") setProgress(data.progress);
+        if (data.status) setStatus(data.status);
+      }).then((h) => { handle = h; }).catch(() => {});
+    }
+    return () => {
+      if (handle?.remove) handle.remove();
+    };
+  }, []);
+
+  const handleUpdate = async () => {
+    setError(null);
+    setStatus("Updating… starting download");
+    setProgress(10);
+    setCompleted(false);
+
+    const targetUrl = cfg.apkUrl?.trim() || "https://github.com/CHRISOSTIVEJASON/signal-saver-roaming-pass/releases/download/latest-apk/app-debug.apk";
+
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const res = await GlobalRelay.installUpdate({ url: targetUrl });
+        if (res?.success) {
+          setProgress(100);
+          setStatus("Update downloaded! Launching Android package installer…");
+          setCompleted(true);
+        }
+      } catch (err: any) {
+        setError(err?.message || "Failed to download update. Please check internet connection.");
+        setStatus(null);
+        setProgress(0);
+      }
+    } else {
+      // Browser / laptop: download update package directly in-place without redirecting
+      try {
+        setStatus("Downloading update package…");
+        setProgress(40);
+        const a = document.createElement("a");
+        a.href = targetUrl;
+        a.download = "GlobalNetworks-latest.apk";
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setProgress(100);
+        setStatus("Update package downloaded!");
+        setCompleted(true);
+      } catch (err: any) {
+        setError("Unable to download update package: " + (err?.message || "Unknown error"));
+        setStatus(null);
+      }
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/90 p-4 backdrop-blur">
       <div role="alertdialog" aria-label="Update required" className="w-full max-w-sm space-y-4 rounded-2xl border border-accent/40 bg-card p-6 text-center shadow-[var(--shadow-ambient)]">
-        <RefreshCw className="mx-auto h-10 w-10 text-accent" />
-        <h2 className="text-lg font-bold">A new version is available</h2>
-        <p className="text-sm text-muted-foreground">Version {cfg.latestVersion} is required to keep using Global Networks. You have {APP_VERSION}.</p>
-        <Button onClick={() => openApk(cfg.apkUrl)} className="h-12 w-full rounded-xl bg-accent font-semibold text-accent-foreground hover:brightness-110">Update Now</Button>
+        <RefreshCw className={`mx-auto h-10 w-10 text-accent ${status && !completed ? "animate-spin" : ""}`} />
+        <h2 className="text-lg font-bold">
+          {completed ? "Update Ready!" : status ? "Updating Global Networks…" : "A new version is available"}
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          {completed
+            ? "Package downloaded. Please tap 'Install' on your device to complete the update."
+            : status
+            ? "Downloading the latest update package directly inside the app. Please wait…"
+            : `Version ${cfg.latestVersion} is required to continue. You have ${APP_VERSION}.`}
+        </p>
+
+        {status && (
+          <div className="space-y-2">
+            <div className="h-2.5 w-full overflow-hidden rounded-full bg-secondary">
+              <div
+                className="h-full bg-accent transition-all duration-300"
+                style={{ width: `${Math.max(8, progress)}%` }}
+              />
+            </div>
+            <p className="text-xs text-accent font-medium">{status}</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive text-left">
+            {error}
+          </div>
+        )}
+
+        <Button
+          onClick={handleUpdate}
+          disabled={Boolean(status && !completed && !error)}
+          className="h-12 w-full rounded-xl bg-accent font-semibold text-accent-foreground hover:brightness-110 disabled:opacity-70"
+        >
+          {completed ? "Re-launch Installer" : status ? (progress >= 100 ? "Installing…" : `Updating… ${progress}%`) : error ? "Retry Update" : "Update Now"}
+        </Button>
       </div>
     </div>
   );

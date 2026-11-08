@@ -56,7 +56,7 @@ export function CloudSync() {
         apkUrl: settings.data?.apk_url ?? localCfg.apkUrl,
         latestVersion: settings.data?.latest_version ?? localCfg.latestVersion,
         updateRequired: settings.data?.update_required ?? localCfg.updateRequired,
-        live: settings.data?.live ?? localCfg.live
+        live: (settings.data?.live !== undefined && settings.data?.live !== null) ? Boolean(settings.data.live) : Boolean(localCfg.live)
       });
 
       if (!user) { clearPrivateCache(); return; }
