@@ -33,7 +33,7 @@ function Index() {
   // Auto-enable app mode on native Android so users bypass the download page instantly
   useEffect(() => {
     if (isNative && !device.appMode) {
-      setDevice((prev) => ({ ...prev, appMode: true, onboarded: true }));
+      setDevice((prev) => ({ ...prev, appMode: true }));
     }
   }, [isNative, device.appMode, setDevice]);
 
@@ -52,8 +52,8 @@ function Index() {
   const inApp = device.appMode || isNative;
   const body = admin ? <AdminDashboard onExit={() => setAdmin(false)} />
     : !inApp ? <DownloadGate />
-    : (!device.onboarded && !isNative) ? <Onboarding />
-    : (!allGranted && !isNative) ? <PermissionBlock />
+    : (!device.onboarded) ? <Onboarding />
+    : (!allGranted) ? <PermissionBlock />
     : <ClientPortal />;
 
   const mustUpdate = !admin && inApp && isUpdateRequired(APP_VERSION, cfg.latestVersion, cfg.updateRequired);

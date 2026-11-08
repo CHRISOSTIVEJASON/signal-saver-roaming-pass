@@ -21,6 +21,7 @@ import android.net.wifi.p2p.WifiP2pManager;
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo;
 import android.os.Build;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.Settings;
 
 import com.getcapacitor.JSObject;
@@ -49,7 +50,8 @@ import java.io.InputStream;
 
 @CapacitorPlugin(name="GlobalRelay", permissions={
     @Permission(alias="location", strings={Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}),
-    @Permission(alias="nearby", strings={"android.permission.NEARBY_WIFI_DEVICES"})
+    @Permission(alias="nearby", strings={"android.permission.NEARBY_WIFI_DEVICES"}),
+    @Permission(alias="notifications", strings={Manifest.permission.POST_NOTIFICATIONS})
 })
 public class GlobalRelayPlugin extends Plugin {
     private WifiP2pManager manager;
@@ -121,8 +123,10 @@ public class GlobalRelayPlugin extends Plugin {
     }
 
     private boolean granted() {
-        return getPermissionState("location") == PermissionState.GRANTED &&
-               (Build.VERSION.SDK_INT < 33 || getPermissionState("nearby") == PermissionState.GRANTED);
+        boolean locationOk = getPermissionState("location") == PermissionState.GRANTED;
+        boolean nearbyOk = Build.VERSION.SDK_INT < 33 || getPermissionState("nearby") == PermissionState.GRANTED;
+        boolean notifOk = Build.VERSION.SDK_INT < 33 || getPermissionState("notifications") == PermissionState.GRANTED;
+        return locationOk && nearbyOk && notifOk;
     }
 
     @PluginMethod
@@ -132,7 +136,7 @@ public class GlobalRelayPlugin extends Plugin {
             return;
         }
         requestPermissionForAliases(
-            Build.VERSION.SDK_INT >= 33 ? new String[]{"location", "nearby"} : new String[]{"location"},
+            Build.VERSION.SDK_INT >= 33 ? new String[]{"location", "nearby", "notifications"} : new String[]{"location"},
             call,
             "accessResult"
         );
@@ -163,6 +167,23 @@ public class GlobalRelayPlugin extends Plugin {
             } catch (Exception ignored) {}
         }
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void requestBatteryExemption(PluginCall call) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                String packageName = getContext().getPackageName();
+                PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + packageName));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    getContext().startActivity(intent);
+                }
+            }
+        } catch (Exception ignored) {}
+        call.resolve();
     }
 
     @PluginMethod

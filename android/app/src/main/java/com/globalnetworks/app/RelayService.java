@@ -11,6 +11,7 @@ import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.util.Log;
 
 import java.io.BufferedInputStream;
@@ -48,6 +49,7 @@ public class RelayService extends Service {
     private ServerSocket serverSocket;
     private DatagramSocket dnsRelaySocket;
     private ExecutorService threadPool;
+    private PowerManager.WakeLock wakeLock;
 
     public static boolean isRouterRunning() {
         return routerRunning.get();
@@ -104,6 +106,14 @@ public class RelayService extends Service {
     private synchronized void startRouter() {
         if (routerRunning.get()) return;
         routerRunning.set(true);
+        try {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm != null && (wakeLock == null || !wakeLock.isHeld())) {
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GlobalNetworks::RelayWakeLock");
+                wakeLock.setReferenceCounted(false);
+                wakeLock.acquire(24 * 60 * 60 * 1000L);
+            }
+        } catch (Exception ignored) {}
         threadPool = Executors.newCachedThreadPool();
 
         // 1. TCP Proxy Server (HTTP / HTTPS / SOCKS5 TCP & UDP ASSOCIATE)
@@ -127,6 +137,12 @@ public class RelayService extends Service {
                 }
             } catch (Exception e) {
                 routerRunning.set(false);
+        if (wakeLock != null) {
+            try {
+                if (wakeLock.isHeld()) wakeLock.release();
+            } catch (Exception ignored) {}
+            wakeLock = null;
+        }
             }
         });
 

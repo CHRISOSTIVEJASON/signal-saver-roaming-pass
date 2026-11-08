@@ -14,9 +14,9 @@ export const useConfig = () => {
 };
 
 const PERMS: { key: keyof Device["perms"]; title: string; why: string; icon: ReactNode }[] = [
-  { key: "background", title: "Run in the background", why: "Keeps your pass timer running correctly when the app is closed.", icon: <BatteryCharging className="h-5 w-5" /> },
-  { key: "wifi", title: "Find nearby Wi-Fi", why: "Connects you automatically to Global Networks hotspots.", icon: <Wifi className="h-5 w-5" /> },
-  { key: "relay", title: "Share connection boost", why: "Helps keep your connection strong as you move around.", icon: <Share2 className="h-5 w-5" /> },
+  { key: "background", title: "Continuous Background & Auto-Start", why: "Allows relay and Wi-Fi sensing to run continuously without sleeping, even when locked or rebooted.", icon: <BatteryCharging className="h-5 w-5" /> },
+  { key: "wifi", title: "Find Nearby Wi-Fi & Hotspots", why: "Mandatory location and nearby devices permission to scan and stamp network signals.", icon: <Wifi className="h-5 w-5" /> },
+  { key: "relay", title: "Status Notification & Relay", why: "Required for foreground network service to maintain local connection sharing.", icon: <Share2 className="h-5 w-5" /> },
 ];
 
 function openApk(url: string) {
@@ -174,6 +174,9 @@ export function Onboarding() {
   const answer = async (v: Perm) => {
     if (Capacitor.isNativePlatform() && v === "granted") {
       const result = await GlobalRelay.requestAccess();
+      try {
+        await GlobalRelay.requestBatteryExemption();
+      } catch (_) {}
       v = result.granted ? "granted" : "denied";
     }
     const perms = { ...device.perms, [p.key]: v };
@@ -220,8 +223,26 @@ export function PermissionBlock() {
         ))}
       </ul>
       <div className="grid grid-cols-2 gap-2">
-        <Button onClick={() => { if (Capacitor.isNativePlatform()) void GlobalRelay.openSettings(); else setSettings(true); }} className="flex h-11 items-center justify-center gap-1.5 rounded-xl bg-primary text-sm font-semibold text-primary-foreground"><Settings className="h-4 w-4" />Open Settings</Button>
-        <Button onClick={recheck} className="flex h-11 items-center justify-center gap-1.5 rounded-xl border border-border text-sm font-medium"><RefreshCw className="h-4 w-4" />Re-check Permissions</Button>
+        <Button onClick={async () => {
+          if (Capacitor.isNativePlatform()) {
+            try {
+              const res = await GlobalRelay.requestAccess();
+              await GlobalRelay.requestBatteryExemption();
+              if (res.granted) {
+                setDevice({ ...device, perms: { background: "granted", wifi: "granted", relay: "granted" } });
+                toast.success("Mandatory permissions enabled!");
+                return;
+              }
+            } catch (_) {}
+            void GlobalRelay.openSettings();
+          } else {
+            setDevice({ ...device, perms: { background: "granted", wifi: "granted", relay: "granted" } });
+            toast.success("Permissions enabled");
+          }
+        }} className="flex h-11 items-center justify-center gap-1.5 rounded-xl bg-primary text-sm font-semibold text-primary-foreground">
+          <Settings className="h-4 w-4" />Allow Permissions
+        </Button>
+        <Button onClick={recheck} className="flex h-11 items-center justify-center gap-1.5 rounded-xl border border-border text-sm font-medium"><RefreshCw className="h-4 w-4" />Re-check</Button>
       </div>
       {settings && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/80 p-4 backdrop-blur-sm sm:items-center" onClick={() => setSettings(false)}>
