@@ -238,3 +238,42 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     }).eq('id', session.id);
     return updated;
   });
+
+export const verifyMasterPasscode = createServerFn({ method: 'POST' })
+  .validator((input: { passcode: string }) => z.object({ passcode: z.string() }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { data: record } = await supabaseAdmin
+      .from('gn_captive_credentials')
+      .select('config')
+      .eq('network_id', '__admin_master_passcode__')
+      .maybeSingle();
+
+    const expected = (record?.config as { passcode?: string } | null)?.passcode || '254700';
+    return { ok: data.passcode.trim() === expected.trim() };
+  });
+
+export const updateMasterPasscode = createServerFn({ method: 'POST' })
+  .validator((input: { currentSecurityCode: string; newPasscode: string }) => z.object({
+    currentSecurityCode: z.string(),
+    newPasscode: z.string()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    if (data.currentSecurityCode.trim() !== '2006') {
+      throw new Error('Invalid security code');
+    }
+    if (!/^\d{4,8}$/.test(data.newPasscode.trim())) {
+      throw new Error('Passcode must be 4 to 8 digits');
+    }
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { error } = await supabaseAdmin.from('gn_captive_credentials').upsert({
+      network_id: '__admin_master_passcode__',
+      config: { passcode: data.newPasscode.trim(), updated_at: Date.now() },
+      updated_at: new Date().toISOString()
+    });
+    if (error) {
+      console.error('Failed to update cloud master passcode:', error);
+      throw new Error('Failed to update master passcode in cloud');
+    }
+    return { ok: true, passcode: data.newPasscode.trim() };
+  });

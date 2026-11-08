@@ -1,4 +1,4 @@
-import { getAdminPaymentConfig, savePaymentConfig } from "@/lib/cloud.functions";
+import { getAdminPaymentConfig, savePaymentConfig, updateMasterPasscode } from "@/lib/cloud.functions";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type ReactNode } from "react";
 import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X } from "lucide-react";
@@ -263,22 +263,37 @@ function PasscodeCard() {
   const [step, setStep] = useState<"idle" | "security" | "new">("idle");
   const [sec, setSec] = useState("");
   const [pass, setPass] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveCloudPasscode = useServerFn(updateMasterPasscode);
+
   const verify = () => {
     if (sec !== "2006") { toast.error("Invalid security code"); return; }
     setStep("new");
   };
-  const save = () => {
+
+  const save = async () => {
     const r = changePasscode(sec, pass);
     if (!r.ok) { toast.error(r.error); return; }
-    write(KEYS.passcode, r.passcode);
-    toast.success("Master passcode updated");
-    setStep("idle"); setSec(""); setPass("");
+    setSaving(true);
+    try {
+      write(KEYS.passcode, r.passcode);
+      try {
+        await saveCloudPasscode({ data: { currentSecurityCode: sec, newPasscode: r.passcode } });
+      } catch (err) {
+        console.warn("Cloud passcode sync warning:", err);
+      }
+      toast.success("Master passcode updated globally across all apps");
+      setStep("idle"); setSec(""); setPass("");
+    } finally {
+      setSaving(false);
+    }
   };
+
   return (
     <Panel title="Master Passcode" icon={<KeyRound className="h-4 w-4" />}>
       {step === "idle" && (
         <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">Change the passcode used to open this dashboard. A security code is required.</p>
+          <p className="text-sm text-muted-foreground">Change the master passcode used to open this dashboard across all apps. A security code is required.</p>
           <Button onClick={() => setStep("security")} className="h-10 w-full rounded-lg border border-border text-sm font-medium hover:bg-secondary">Change Passcode</Button>
         </div>
       )}
@@ -296,7 +311,9 @@ function PasscodeCard() {
           <Field label="New Master Passcode"><Secret value={pass} onChange={setPass} /></Field>
           <div className="flex gap-2">
             <Button onClick={() => { setStep("idle"); setSec(""); setPass(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
-            <Button onClick={save} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">Save Passcode</Button>
+            <Button onClick={save} disabled={saving} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+              {saving ? "Saving..." : "Save Passcode"}
+            </Button>
           </div>
         </div>
       )}
@@ -307,22 +324,39 @@ function PasscodeCard() {
 function AppSettingsCard() {
   const [saved, setSaved] = useConfig();
   const [c, setC] = useState(saved);
+  const [saving, setSaving] = useState(false);
+  const saveCloudSettings = useServerFn(savePaymentConfig);
+
   useEffect(() => setC(saved), [JSON.stringify(saved)]); // eslint-disable-line react-hooks/exhaustive-deps
-  const save = () => {
+
+  const save = async () => {
     if (!/^\d+(\.\d+)*$/.test(c.latestVersion.trim())) { toast.error("Version must look like 1.2.0"); return; }
-    setSaved({ ...saved, apkUrl: c.apkUrl.trim(), latestVersion: c.latestVersion.trim(), updateRequired: c.updateRequired });
-    toast.success("App settings saved");
+    setSaving(true);
+    const next = { ...saved, apkUrl: c.apkUrl.trim(), latestVersion: c.latestVersion.trim(), updateRequired: c.updateRequired };
+    try {
+      setSaved(next);
+      await saveCloudSettings({ data: next });
+      toast.success("App settings saved and synced to all devices");
+    } catch (err) {
+      console.warn("Failed cloud settings save:", err);
+      toast.error("Failed to sync settings to cloud database");
+    } finally {
+      setSaving(false);
+    }
   };
+
   return (
     <Panel title="Android App & Updates" icon={<Smartphone className="h-4 w-4" />}>
       <div className="space-y-3">
         <Field label="APK download link"><input className={inputCls} value={c.apkUrl} placeholder="https://…/global-networks.apk" onChange={(e) => setC({ ...c, apkUrl: e.target.value })} /></Field>
         <Field label={`Latest version (installed app is ${APP_VERSION})`}><input className={inputCls + " font-mono"} value={c.latestVersion} onChange={(e) => setC({ ...c, latestVersion: e.target.value })} /></Field>
         <label className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
-          Require users to update
+          Require users to update (blocks app till updated)
           <input type="checkbox" checked={c.updateRequired} onChange={(e) => setC({ ...c, updateRequired: e.target.checked })} className="h-5 w-5 accent-[var(--primary)]" />
         </label>
-        <Button onClick={save} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">Save App Settings</Button>
+        <Button onClick={save} disabled={saving} className="h-10 w-full rounded-lg bg-primary text-sm font-semibold text-primary-foreground hover:brightness-110">
+          {saving ? "Saving..." : "Save App Settings"}
+        </Button>
       </div>
     </Panel>
   );

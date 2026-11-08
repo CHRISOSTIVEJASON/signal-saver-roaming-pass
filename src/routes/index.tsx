@@ -1,3 +1,7 @@
+import { WifiOff } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
+import { verifyMasterPasscode } from "@/lib/cloud.functions";
+import { useServerFn } from "@tanstack/react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { ShieldCheck, X } from "lucide-react";
@@ -17,31 +21,80 @@ function Index() {
   const [admin, setAdmin] = useState(false);
   const [prompt, setPrompt] = useState(false);
   const [passcode, setPasscode] = useState("");
-  const [device] = useDevice();
+  const [unlocking, setUnlocking] = useState(false);
+  const [device, setDevice] = useDevice();
   const [cfg] = useConfig();
-  const allGranted = Object.values(device.perms).every((v) => v === "granted");
-  const body = admin ? <AdminDashboard onExit={() => setAdmin(false)} />
-    : !device.appMode ? <DownloadGate />
-    : !device.onboarded ? <Onboarding />
-    : !allGranted ? <PermissionBlock />
-    : <ClientPortal />;
-  const mustUpdate = !admin && device.appMode && isUpdateRequired(APP_VERSION, cfg.latestVersion, cfg.updateRequired);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
 
-  const handleUnlock = (e: React.FormEvent) => {
+  const verifyCloudPasscode = useServerFn(verifyMasterPasscode);
+
+  const isNative = typeof window !== "undefined" && (Capacitor.isNativePlatform() || window.location.protocol === "capacitor:" || Boolean((window as any).Capacitor?.isNativePlatform?.()));
+
+  // Auto-enable app mode on native Android so users bypass the download page instantly
+  useEffect(() => {
+    if (isNative && !device.appMode) {
+      setDevice((prev) => ({ ...prev, appMode: true, onboarded: true }));
+    }
+  }, [isNative, device.appMode, setDevice]);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  const allGranted = Object.values(device.perms).every((v) => v === "granted");
+  const inApp = device.appMode || isNative;
+  const body = admin ? <AdminDashboard onExit={() => setAdmin(false)} />
+    : !inApp ? <DownloadGate />
+    : (!device.onboarded && !isNative) ? <Onboarding />
+    : (!allGranted && !isNative) ? <PermissionBlock />
+    : <ClientPortal />;
+
+  const mustUpdate = !admin && inApp && isUpdateRequired(APP_VERSION, cfg.latestVersion, cfg.updateRequired);
+
+  const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (passcode === getPasscode()) {
-      setAdmin(true);
-      setPrompt(false);
-      setPasscode("");
-      toast.success("Admin console unlocked");
-    } else {
-      toast.error("Incorrect master passcode");
+    if (!passcode.trim()) return;
+    setUnlocking(true);
+    try {
+      let authorized = false;
+      try {
+        const res = await verifyCloudPasscode({ data: { passcode: passcode.trim() } });
+        if (res?.ok) authorized = true;
+      } catch (err) {
+        // Fallback to local stored passcode if cloud is unreachable
+        if (passcode.trim() === getPasscode()) authorized = true;
+      }
+
+      if (authorized) {
+        setAdmin(true);
+        setPrompt(false);
+        setPasscode("");
+        toast.success("Admin console unlocked");
+      } else {
+        toast.error("Incorrect master passcode");
+      }
+    } finally {
+      setUnlocking(false);
     }
   };
 
   return (
     <main className="flex min-h-screen items-start justify-center px-4 py-4 sm:items-center sm:py-12">
       <div className={`shimmer-border relative w-full rounded-3xl bg-card/95 p-4 shadow-[var(--shadow-ambient)] backdrop-blur sm:p-8 ${admin ? "max-w-5xl" : "max-w-md"}`}>
+        {!isOnline && (
+          <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400">
+            <WifiOff className="h-3.5 w-3.5 animate-pulse" />
+            <span>No Network Connection — Local pool active</span>
+          </div>
+        )}
+
         {!admin && (
           <Button variant="ghost" size="icon" onClick={() => setPrompt(true)} aria-label="Admin" className="absolute right-3 top-3 z-10 text-muted-foreground/40 transition hover:text-accent">
             <ShieldCheck className="h-5 w-5" />
@@ -75,7 +128,9 @@ function Index() {
               />
               <div className="flex gap-2">
                 <Button type="button" onClick={() => { setPrompt(false); setPasscode(""); }} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
-                <Button type="submit" className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">Unlock</Button>
+                <Button type="submit" disabled={unlocking} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+                  {unlocking ? "Verifying..." : "Unlock"}
+                </Button>
               </div>
             </form>
           </div>
