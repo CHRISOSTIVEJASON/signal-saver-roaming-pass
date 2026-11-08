@@ -24,6 +24,7 @@ export type Device = {
   currentWifi: WifiInfo | null;
   personalSsids: string[];
   relay?: MeshLink | null;
+  captive?: { bssid: string; ready: boolean; required: boolean } | null;
 };
 export const defaultDevice: Device = {
   appMode: false, onboarded: false,

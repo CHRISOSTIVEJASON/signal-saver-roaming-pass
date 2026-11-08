@@ -14,6 +14,32 @@ export type Database = {
   }
   public: {
     Tables: {
+      gn_captive_credentials: {
+        Row: {
+          config: Json
+          network_id: string
+          updated_at: string
+        }
+        Insert: {
+          config: Json
+          network_id: string
+          updated_at?: string
+        }
+        Update: {
+          config?: Json
+          network_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gn_captive_credentials_network_id_fkey"
+            columns: ["network_id"]
+            isOneToOne: true
+            referencedRelation: "gn_networks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       gn_mesh_links: {
         Row: {
           id: string
