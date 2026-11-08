@@ -44,3 +44,29 @@ export function formatClock(ms: number) {
   const sec = s % 60;
   return [h, m, sec].map((n) => String(n).padStart(2, "0")).join(":");
 }
+
+export const APP_VERSION = "1.0.0";
+
+export type WifiState = "pool" | "personal" | "searching";
+/** Pool Wi-Fi drains the pass; the user's own saved Wi-Fi never does; anything else freezes it. */
+export function connectionState(
+  current: { ssid: string; bssid: string } | null,
+  poolBssids: string[],
+  personalSsids: string[],
+): WifiState {
+  if (!current) return "searching";
+  if (poolBssids.map((b) => b.toUpperCase()).includes(current.bssid.toUpperCase())) return "pool";
+  if (personalSsids.includes(current.ssid)) return "personal";
+  return "searching";
+}
+
+const parts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
+/** Update blocks only when marked required AND the latest version is newer than the installed one. */
+export function isUpdateRequired(installed: string, latest: string, required: boolean) {
+  if (!required || !latest) return false;
+  const a = parts(installed), b = parts(latest);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if ((b[i] ?? 0) !== (a[i] ?? 0)) return (b[i] ?? 0) > (a[i] ?? 0);
+  }
+  return false;
+}
