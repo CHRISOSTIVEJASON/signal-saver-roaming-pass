@@ -601,7 +601,7 @@ function CompanionSharing({ session, onUpdateSession }: { session: Session; onUp
           <div className="rounded-lg border border-border/40 bg-secondary/30 p-2.5 text-[11px] space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-foreground flex items-center gap-1.5">
-                <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Protection B: 1-Device Lock
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Strict 2-Device Loop
               </span>
               {isTied ? (
                 <span className="rounded-full bg-primary/15 text-primary px-2 py-0.5 text-[10px] font-semibold border border-primary/30">
@@ -615,9 +615,9 @@ function CompanionSharing({ session, onUpdateSession }: { session: Session; onUp
             </div>
             <p className="text-muted-foreground text-[11px] leading-relaxed">
               {isTied ? (
-                <>Tied to your paired companion device. Any other device entering this PIN will be <strong>blocked</strong>.</>
+                <>Locked to 1 companion device. Any 3rd device is strictly <strong>blocked</strong>. If you cleared browser cache or changed laptops, tap <strong>Release / Switch Device</strong> below to unlock the slot.</>
               ) : (
-                <>On your laptop or 2nd phone, open the portal and tap <strong>Pair Companion</strong> using PIN <strong className="text-primary font-mono">{pin}</strong> to lock to that device.</>
+                <>On your laptop or 2nd phone, open the portal and tap <strong>Pair Companion</strong> using PIN <strong className="text-primary font-mono">{pin}</strong> to lock as the 1 allowed companion.</>
               )}
             </p>
             {isTied && (
@@ -718,14 +718,19 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
         });
         if (res && mounted) {
           const frozen = Boolean((res as any).frozen);
+          const unauthorized = Boolean((res as any).unauthorized);
           update((s) => ({
             ...s,
             frozen,
+            unauthorized,
             remainingMs: frozen ? s.remainingMs : ((res as any).remainingMs ?? s.remainingMs),
-            online: frozen ? false : Boolean((res as any).online)
+            online: (frozen || unauthorized) ? false : Boolean((res as any).online)
           }));
-          if (frozen && Capacitor.isNativePlatform()) {
+          if ((frozen || unauthorized) && Capacitor.isNativePlatform()) {
             void GlobalRelay.stop().catch(() => {});
+          }
+          if (unauthorized) {
+            toast.error("Device not authorized: pass is locked to another 2-device loop.");
           }
         }
       } catch {}

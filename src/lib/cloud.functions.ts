@@ -371,11 +371,35 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
     if (!targetRow) throw new Error('No unexpired pass found for this phone number');
     const payload = targetRow.payload as any;
 
-    // Check device binding to prevent sharing across multiple phones
-    // Reinstall / cleared storage regenerates the device ID: re-bind the pass to this
-    // device (the old install loses it), so one phone keeps one active pass.
-    if (payload.bound_device_id !== data.deviceId) {
-      if (payload.paired_companion_id === data.deviceId) payload.paired_companion_id = null;
+    // Strict Device Lock (2-device loop: Primary + 1 Paired Companion):
+    // 1. If this device is already the paired companion, restore the companion session
+    if (payload.paired_companion_id === data.deviceId) {
+      const session: Session = {
+        id: payload.id,
+        phone: payload.phone,
+        passId: payload.passId,
+        totalMs: payload.totalMs,
+        remainingMs: Math.max(0, payload.remainingMs),
+        lastTick: Date.now(),
+        online: true,
+        startedAt: payload.startedAt,
+        isCompanion: true,
+        companionPin: payload.companion_pin || getCompanionPin(null, payload.phone),
+        pairedCompanionId: payload.paired_companion_id,
+        boundDeviceId: payload.bound_device_id || null,
+        frozen: Boolean(payload.frozen),
+        frozenAt: payload.frozenAt,
+      };
+      return { session };
+    }
+
+    // 2. If this pass is locked to another primary device, reject unauthorized restore!
+    if (payload.bound_device_id && payload.bound_device_id !== data.deviceId) {
+      throw new Error('This pass is strictly locked to another primary device. To use this pass here, pair it as your 1 allowed companion using the 6-digit PIN on the host device.');
+    }
+
+    // 3. If bound_device_id is not set yet, bind this device as primary
+    if (!payload.bound_device_id) {
       payload.bound_device_id = data.deviceId;
       await supabaseAdmin.from('gn_sessions').update({
         payload: JSON.parse(JSON.stringify(payload)),
@@ -394,6 +418,9 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
       startedAt: payload.startedAt,
       companionPin: payload.companion_pin || getCompanionPin(null, payload.phone),
       pairedCompanionId: payload.paired_companion_id || null,
+      boundDeviceId: payload.bound_device_id || null,
+      frozen: Boolean(payload.frozen),
+      frozenAt: payload.frozenAt,
     };
 
     return { session };
@@ -444,12 +471,15 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
       throw new Error('Incorrect companion PIN. Please check the 6-digit code on the primary device.');
     }
 
-    // Protection B: Strictly allow only ONE companion device!
+    // Protection B: Strict 2-Device Loop (Primary + 1 Companion):
     if (payload.bound_device_id === data.deviceId) {
       throw new Error('This device already holds the main pass. Pair a different laptop or phone.');
     }
-    // A correct PIN moves the single companion slot to this device (covers cleared storage);
-    // the previous companion loses access, so only one companion is ever linked.
+
+    // If companion slot is already locked to another companion device, enforce 2-device loop limit
+    if (payload.paired_companion_id && payload.paired_companion_id !== data.deviceId) {
+      throw new Error('Companion slot is already locked to another device. Exactly 1 companion is permitted in this 2-device loop. Tap "Release / Switch Device" on the host phone first.');
+    }
 
     // Bind this companion device ID
     payload.paired_companion_id = data.deviceId;
@@ -525,6 +555,23 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     const { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.id).maybeSingle();
     if (!row) throw new Error('Pass not found');
     const session = row.payload as unknown as Session;
+    const sessionPayload = (row.payload || {}) as any;
+
+    // Strict 2-device loop enforcement on heartbeat:
+    // If deviceId is provided and bound_device_id exists, reject any 3rd device
+    if (data.deviceId && sessionPayload.bound_device_id) {
+      const isPrimary = sessionPayload.bound_device_id === data.deviceId;
+      const isCompanion = sessionPayload.paired_companion_id === data.deviceId;
+      if (!isPrimary && !isCompanion) {
+        return {
+          ...session,
+          unauthorized: true,
+          online: false,
+          frozen: true
+        };
+      }
+    }
+
     const { data: pool } = await supabaseAdmin.from('gn_networks').select('bssid');
     const online = Boolean(data.bssid && pool?.some((n) => n.bssid.toUpperCase() === data.bssid?.toUpperCase())) || Boolean(data.relayReady);
     const { data: svc } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
@@ -899,4 +946,31 @@ export const toggleFreezeSession = createServerFn({ method: 'POST' })
     }).eq('id', data.sessionId);
     if (error) throw new Error('Failed to update session freeze state: ' + error.message);
     return { ok: true, frozen: data.frozen, session: payload };
+  });
+
+
+export const resetDeviceLock = createServerFn({ method: 'POST' })
+  .validator((input: { sessionId: string; lockType: 'companion' | 'all' }) => z.object({
+    sessionId: z.string(),
+    lockType: z.enum(['companion', 'all'])
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.sessionId).maybeSingle();
+    if (!row) throw new Error('Session not found');
+    const payload = (row.payload || {}) as any;
+    if (data.lockType === 'companion') {
+      payload.paired_companion_id = null;
+      payload.paired_companion_at = null;
+    } else {
+      payload.bound_device_id = null;
+      payload.paired_companion_id = null;
+      payload.paired_companion_at = null;
+    }
+    const { error } = await supabaseAdmin.from('gn_sessions').update({
+      payload: JSON.parse(JSON.stringify(payload)),
+      updated_at: new Date().toISOString()
+    }).eq('id', data.sessionId);
+    if (error) throw new Error('Failed to reset device lock: ' + error.message);
+    return { ok: true, session: payload };
   });

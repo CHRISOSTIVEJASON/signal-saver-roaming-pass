@@ -1,9 +1,9 @@
-import { getAdminPaymentConfig, savePaymentConfig, getCloudTransactionsAndSessions, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks, toggleServiceStatus, getServiceStatus, getExemptedNumbers, saveExemptedNumbers, getCloudOffers, saveCloudOffers } from "@/lib/cloud.functions";
+import { getAdminPaymentConfig, savePaymentConfig, getCloudTransactionsAndSessions, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks, toggleServiceStatus, getServiceStatus, getExemptedNumbers, saveExemptedNumbers, getCloudOffers, saveCloudOffers, toggleFreezeSession, resetDeviceLock, getBlockedNumbers, saveBlockedNumbers } from "@/lib/cloud.functions";
 import { Capacitor } from "@capacitor/core";
 import { GlobalRelay } from "@/lib/native-relay";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type ReactNode } from "react";
-import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X, Power, PowerOff, PhoneCall, Tag, Edit2 } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X, Power, PowerOff, PhoneCall, Tag, Edit2, Ban, Play, Snowflake, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { APP_VERSION, changePasscode, formatClock, getPass, tick, normalizePhone } from "@/lib/rules";
 import { Button } from "./ui/button";
@@ -30,6 +30,22 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const [now, setNow] = useState(Date.now());
   const fetchCloudRecords = useServerFn(getCloudTransactionsAndSessions);
   const toggleFreeze = useServerFn(toggleFreezeSession);
+  const resetLock = useServerFn(resetDeviceLock);
+
+  async function handleResetLock(sessionId: string, lockType: "companion" | "all") {
+    const label = lockType === "companion" ? "release the companion slot" : "reset all device locks (primary & companion)";
+    if (confirm(`Reset device lock for this pass? This will ${label} so the customer can re-bind if cache was cleared or phone replaced.`)) {
+      try {
+        await resetLock({ data: { sessionId, lockType } });
+        setCloudSessions((prev) =>
+          prev.map((s) => (s.id === sessionId ? { ...s, pairedCompanionId: null } : s))
+        );
+        toast.success(`Device lock reset (${lockType}). Devices can now re-bind.`);
+      } catch (err: any) {
+        toast.error(err?.message || "Failed to reset device lock");
+      }
+    }
+  }
   const saveBlockedList = useServerFn(saveBlockedNumbers);
   const fetchBlocked = useServerFn(getBlockedNumbers);
 
@@ -178,6 +194,9 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
                     <Snowflake className="mr-1 h-3 w-3" /> Freeze
                   </Button>
                 )}
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground" title="Reset device lock if cache was cleared" onClick={() => handleResetLock(s.id, "all")}>
+                  <KeyRound className="mr-1 h-3 w-3" /> Unlock
+                </Button>
                 <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10" onClick={() => handleQuickBlock(s.phone)}>
                   <Ban className="mr-1 h-3 w-3" /> Block
                 </Button>

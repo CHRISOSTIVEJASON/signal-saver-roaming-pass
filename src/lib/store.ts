@@ -50,6 +50,8 @@ export type Session = {
   companionPin?: string;
   frozen?: boolean;
   frozenAt?: number;
+  unauthorized?: boolean;
+  boundDeviceId?: string | null;
 };
 export type Txn = {
   id: string;
