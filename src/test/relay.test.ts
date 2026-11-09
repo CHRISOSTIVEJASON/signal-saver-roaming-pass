@@ -43,3 +43,10 @@ describe("Protection B: Companion device binding", () => {
     expect(!payload.paired_companion_id || payload.paired_companion_id === "phone-2").toBe(true);
   });
 });
+
+import { tick as _tick } from "@/lib/rules";
+describe("timer preservation", () => {
+  it("does not charge time while frozen (suspended/offline)", () => {
+    expect(_tick(3_600_000, 0, 10_000_000, false)).toBe(3_600_000);
+  });
+});

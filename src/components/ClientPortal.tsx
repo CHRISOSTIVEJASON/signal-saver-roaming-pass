@@ -669,7 +669,8 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     const step = () => {
       const now = Date.now();
       const running = state === "pool" && !connecting && !suspended;
-      update((s) => ({ remainingMs: tick(s.remainingMs, s.lastTick, now, running), lastTick: now, online: running }));
+      // Cap each step so time spent closed, suspended or offline is never charged.
+      update((s) => ({ remainingMs: tick(s.remainingMs, s.lastTick, Math.min(now, s.lastTick + 5_000), running), lastTick: now, online: running }));
       if (ref.current.online) recordRelayTick(ref.current.phone);
       force((n) => n + 1);
     };
