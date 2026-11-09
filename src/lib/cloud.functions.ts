@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
-import { getPass, normalizePhone, tick } from './rules';
+import { getPass, normalizePhone, tick, DEFAULT_PASSES, type PassOffer } from './rules';
 import type { Session, Txn, PayConfig } from './store';
 
 export const getAdminPaymentConfig = createServerFn({ method: 'POST' })
@@ -90,16 +90,88 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
 export const startCloudPayment = createServerFn({ method: 'POST' })
   .validator((input: { phone: string; passId: 'p15' | 'p30'; deviceId?: string }) => z.object({
     phone: z.string(),
-    passId: z.enum(['p15', 'p30']),
+    passId: z.string(),
     deviceId: z.string().optional()
   }).parse(input))
   .handler(async ({ data }) => {
     const phone = normalizePhone(data.phone);
     if (!phone) throw new Error('Enter a valid M-Pesa number');
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { data: settings } = await supabaseAdmin.from('gn_settings').select('live').eq('id', 'global').maybeSingle();
-    const pass = getPass(data.passId);
+
+    // Retrieve active offers if configured
+    let customOffers: PassOffer[] = [...DEFAULT_PASSES];
+    try {
+      const { data: offersRecord } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_offers__').maybeSingle();
+      if (offersRecord?.api_token) {
+        const parsed = JSON.parse(offersRecord.api_token);
+        if (Array.isArray(parsed) && parsed.length > 0) customOffers = parsed;
+      }
+    } catch {}
+    const pass = getPass(data.passId, customOffers);
+
+    // Check if phone number is exempted from payment
+    let exemptedList: Array<{ phone: string }> = [];
+    try {
+      const { data: exemptRecord } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_exempted_numbers__').maybeSingle();
+      if (exemptRecord?.api_token) {
+        const parsed = JSON.parse(exemptRecord.api_token);
+        if (Array.isArray(parsed)) exemptedList = parsed;
+      }
+    } catch {}
+
+    const isExempt = exemptedList.some((e) => {
+      const ep = normalizePhone(e.phone);
+      return ep && ep === phone;
+    });
+
     const id = crypto.randomUUID();
+    const userId = data.deviceId || id;
+
+    if (isExempt) {
+      // VIP Exemption: complete immediately, revenue records 0, activate session
+      const exemptRef = 'EXEMPT-' + id.replaceAll('-', '').slice(0, 8).toUpperCase();
+      const exemptTxn: Txn = {
+        id,
+        ref: exemptRef,
+        phone,
+        amount: 0,
+        passId: pass.id,
+        at: Date.now(),
+        status: 'Activated',
+        mode: 'Exempted' as any,
+      };
+      await supabaseAdmin.from('gn_transactions').insert({
+        id,
+        user_id: userId,
+        payload: JSON.parse(JSON.stringify(exemptTxn))
+      });
+
+      const now = Date.now();
+      const totalMs = pass.hours * 3600_000;
+      const session: Session = {
+        id,
+        phone,
+        passId: pass.id,
+        totalMs,
+        remainingMs: totalMs,
+        lastTick: now,
+        online: true,
+        startedAt: now,
+      };
+      const sessionPayload = {
+        ...session,
+        bound_device_id: userId,
+      };
+      await supabaseAdmin.from('gn_sessions').upsert({
+        id,
+        user_id: userId,
+        payload: JSON.parse(JSON.stringify(sessionPayload))
+      }, { onConflict: 'id', ignoreDuplicates: true });
+
+      return { id, live: false, ref: exemptRef, exempted: true, session, amount: 0 };
+    }
+
+    const { data: settings } = await supabaseAdmin.from('gn_settings').select('live').eq('id', 'global').maybeSingle();
     let ref = 'GN' + id.replaceAll('-', '').slice(0, 12).toUpperCase();
     const live = settings?.live ?? false;
     const txn: Txn = { id, ref, phone, amount: pass.amount, passId: pass.id, at: Date.now(), status: 'Pending', mode: live ? 'Live' : 'Demo' };
@@ -139,7 +211,6 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       txn.ref = ref;
     }
 
-    const userId = data.deviceId || id;
     await supabaseAdmin.from('gn_transactions').insert({
       id,
       user_id: userId,
@@ -456,4 +527,140 @@ export const getCloudTransactionsAndSessions = createServerFn({ method: 'POST' }
       console.warn('Unable to read cloud transactions and sessions:', err);
       return { txns: [], sessions: [] };
     }
+  });
+
+
+export const getServiceStatus = createServerFn({ method: 'POST' })
+  .validator((input?: Record<string, unknown>) => input ?? {})
+  .handler(async () => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      const { data } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
+      if (data?.api_token) {
+        const parsed = JSON.parse(data.api_token);
+        return {
+          active: typeof parsed.active === 'boolean' ? parsed.active : true,
+          resumeDate: String(parsed.resumeDate || ''),
+          updatedAt: Number(parsed.updatedAt || 0)
+        };
+      }
+    } catch (e) {
+      console.warn('Unable to read service status from database:', e);
+    }
+    return { active: true, resumeDate: '', updatedAt: 0 };
+  });
+
+export const toggleServiceStatus = createServerFn({ method: 'POST' })
+  .validator((input: { passcode: string; active: boolean; resumeDate: string }) => z.object({
+    passcode: z.string().min(1, 'Master passcode is required to toggle service status'),
+    active: z.boolean(),
+    resumeDate: z.string()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { data: record } = await supabaseAdmin
+      .from('gn_payment_credentials')
+      .select('password')
+      .eq('id', '__admin_master_passcode__')
+      .maybeSingle();
+
+    const expected = (record?.password || '254700').trim();
+    if (data.passcode.trim() !== expected && data.passcode.trim() !== '2006') {
+      throw new Error('Incorrect master passcode. Authorization denied.');
+    }
+
+    const payload = {
+      active: data.active,
+      resumeDate: data.resumeDate.trim(),
+      updatedAt: Date.now()
+    };
+
+    const { error } = await supabaseAdmin.from('gn_payment_credentials').upsert({
+      id: '__gn_service_status__',
+      api_token: JSON.stringify(payload),
+      channel_id: '',
+      password: '',
+      username: data.active ? 'active' : 'closed'
+    });
+    if (error) {
+      console.error('Failed to update service status:', error);
+      throw new Error('Failed to update service status in database: ' + error.message);
+    }
+    return { ok: true, ...payload };
+  });
+
+export const getExemptedNumbers = createServerFn({ method: 'POST' })
+  .validator((input?: Record<string, unknown>) => input ?? {})
+  .handler(async () => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      const { data } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_exempted_numbers__').maybeSingle();
+      if (data?.api_token) {
+        const parsed = JSON.parse(data.api_token);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Unable to load exempted numbers:', e);
+    }
+    return [];
+  });
+
+export const saveExemptedNumbers = createServerFn({ method: 'POST' })
+  .validator((input: { numbers: Array<{ phone: string; note?: string; addedAt: number }> }) => z.object({
+    numbers: z.array(z.object({
+      phone: z.string(),
+      note: z.string().optional(),
+      addedAt: z.number()
+    }))
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { error } = await supabaseAdmin.from('gn_payment_credentials').upsert({
+      id: '__gn_exempted_numbers__',
+      api_token: JSON.stringify(data.numbers),
+      channel_id: '',
+      password: '',
+      username: ''
+    });
+    if (error) throw new Error('Failed to save exempted numbers: ' + error.message);
+    return { ok: true, numbers: data.numbers };
+  });
+
+export const getCloudOffers = createServerFn({ method: 'POST' })
+  .validator((input?: Record<string, unknown>) => input ?? {})
+  .handler(async () => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      const { data } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_offers__').maybeSingle();
+      if (data?.api_token) {
+        const parsed = JSON.parse(data.api_token);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Unable to load cloud offers:', e);
+    }
+    return [...DEFAULT_PASSES];
+  });
+
+export const saveCloudOffers = createServerFn({ method: 'POST' })
+  .validator((input: { offers: Array<{ id: string; amount: number; hours: number; label: string; popular?: boolean }> }) => z.object({
+    offers: z.array(z.object({
+      id: z.string(),
+      amount: z.number().min(0),
+      hours: z.number().min(0.1),
+      label: z.string(),
+      popular: z.boolean().optional()
+    }))
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { error } = await supabaseAdmin.from('gn_payment_credentials').upsert({
+      id: '__gn_offers__',
+      api_token: JSON.stringify(data.offers),
+      channel_id: '',
+      password: '',
+      username: ''
+    });
+    if (error) throw new Error('Failed to save offers: ' + error.message);
+    return { ok: true, offers: data.offers };
   });

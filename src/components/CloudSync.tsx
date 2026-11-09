@@ -3,13 +3,17 @@ import { useServerFn } from '@tanstack/react-start';
 import { supabase } from '@/integrations/supabase/client';
 import { publishCache, clearPrivateCache, registerCloudSaver } from '@/lib/cloud-cache';
 import { defaultConfig, KEYS, read, type Session, type Txn, type Network, type PayConfig } from '@/lib/store';
-import { savePaymentConfig, syncCloudNetworks, getCloudNetworks } from '@/lib/cloud.functions';
+import { savePaymentConfig, syncCloudNetworks, getCloudNetworks, getServiceStatus, getExemptedNumbers, getCloudOffers } from '@/lib/cloud.functions';
+import { write, defaultServiceStatus, DEFAULT_PASSES } from '@/lib/store';
 import type { MeshLink } from '@/lib/relay';
 
 export function CloudSync() {
   const saveConfig = useServerFn(savePaymentConfig);
   const syncNetworks = useServerFn(syncCloudNetworks);
   const fetchNetworks = useServerFn(getCloudNetworks);
+  const fetchServiceStatus = useServerFn(getServiceStatus);
+  const fetchExempted = useServerFn(getExemptedNumbers);
+  const fetchOffers = useServerFn(getCloudOffers);
   useEffect(() => {
     let disposed = false;
     const refresh = async () => {
@@ -35,6 +39,28 @@ export function CloudSync() {
 
       const settings = await supabase.from('gn_settings').select('*').eq('id', 'global').maybeSingle();
       if (disposed) return;
+
+      // Fetch global service status (kill switch), exempted numbers, and dynamic offers
+      try {
+        const sStatus = await fetchServiceStatus();
+        if (sStatus && typeof sStatus.active === 'boolean') {
+          write(KEYS.serviceStatus, sStatus);
+        }
+      } catch {}
+
+      try {
+        const cloudOffers = await fetchOffers();
+        if (cloudOffers && Array.isArray(cloudOffers) && cloudOffers.length > 0) {
+          write(KEYS.offers, cloudOffers);
+        }
+      } catch {}
+
+      try {
+        const exList = await fetchExempted();
+        if (exList && Array.isArray(exList)) {
+          write(KEYS.exemptedNumbers, exList);
+        }
+      } catch {}
 
       // Preserve locally stamped networks and merge with cloud pool so nothing is lost!
       const localNets = read<Network[]>(KEYS.networks, []);
@@ -106,8 +132,9 @@ export function CloudSync() {
       if (event === 'SIGNED_OUT') clearPrivateCache();
       if (['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED'].includes(event)) setTimeout(() => { void refresh(); }, 0);
     });
-    return () => { disposed = true; registerCloudSaver(undefined); void supabase.removeChannel(channel); auth.subscription.unsubscribe(); };
-  }, [saveConfig, syncNetworks, fetchNetworks]);
+    const pollTimer = setInterval(() => { void refresh(); }, 20000);
+    return () => { disposed = true; clearInterval(pollTimer); registerCloudSaver(undefined); void supabase.removeChannel(channel); auth.subscription.unsubscribe(); };
+  }, [saveConfig, syncNetworks, fetchNetworks, fetchServiceStatus, fetchExempted, fetchOffers]);
   return null;
 }
 

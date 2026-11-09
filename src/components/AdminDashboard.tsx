@@ -1,17 +1,17 @@
-import { getAdminPaymentConfig, savePaymentConfig, getCloudTransactionsAndSessions, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks } from "@/lib/cloud.functions";
+import { getAdminPaymentConfig, savePaymentConfig, getCloudTransactionsAndSessions, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks, toggleServiceStatus, getServiceStatus, getExemptedNumbers, saveExemptedNumbers, getCloudOffers, saveCloudOffers } from "@/lib/cloud.functions";
 import { Capacitor } from "@capacitor/core";
 import { GlobalRelay } from "@/lib/native-relay";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type ReactNode } from "react";
-import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X, Power, PowerOff, PhoneCall, Tag, Edit2 } from "lucide-react";
 import { toast } from "sonner";
-import { APP_VERSION, changePasscode, formatClock, getPass, tick } from "@/lib/rules";
+import { APP_VERSION, changePasscode, formatClock, getPass, tick, normalizePhone } from "@/lib/rules";
 import { Button } from "./ui/button";
 import type { MeshLink } from "@/lib/relay";
 import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
 import { saveShared } from '@/lib/cloud-cache';
 import { useConfig, useDevice } from "@/components/Gates";
-import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode, useAppVersion } from "@/lib/store";
+import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode, useAppVersion, useServiceStatus, useExemptedNumbers, useOffers, type PassOffer } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
@@ -127,6 +127,8 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       </>)}
       {tab === "pay" && (<>
         <PayHeroCard />
+        <OffersCard />
+        <ExemptedNumbersCard />
         <Panel
           title="M-Pesa Transactions"
           icon={<Wallet className="h-4 w-4" />}
@@ -148,7 +150,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
             ])} />
         </Panel>
       </>)}
-      {tab === "set" && (<div className="space-y-4"><PasscodeCard /><AppSettingsCard /></div>)}
+      {tab === "set" && (<div className="space-y-4"><ServiceSwitchCard /><PasscodeCard /><AppSettingsCard /></div>)}
     </div>
   );
 }
@@ -207,6 +209,470 @@ function Secret({ value, onChange, placeholder }: { value: string; onChange: (v:
         {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </Button>
     </div>
+  );
+}
+
+
+function ServiceSwitchCard() {
+  const [status, setStatus] = useServiceStatus();
+  const [resumeDate, setResumeDate] = useState(status.resumeDate || "");
+  const [passcode, setPasscode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const toggleStatus = useServerFn(toggleServiceStatus);
+
+  useEffect(() => {
+    setResumeDate(status.resumeDate || "");
+  }, [status.resumeDate]);
+
+  const handleToggle = async (newActive: boolean) => {
+    if (!passcode.trim()) {
+      toast.error("Master passcode is required to turn services ON or OFF");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await toggleStatus({
+        data: {
+          passcode: passcode.trim(),
+          active: newActive,
+          resumeDate: resumeDate.trim(),
+        },
+      });
+      if (res?.ok) {
+        setStatus({ active: newActive, resumeDate: resumeDate.trim() });
+        write(KEYS.serviceStatus, { active: newActive, resumeDate: resumeDate.trim() });
+        setPasscode("");
+        toast.success(
+          newActive
+            ? "Services are now ONLINE across all devices."
+            : "SERVICES CLOSED. All customer apps will now show the closure notice."
+        );
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update service status");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUpdateDate = async () => {
+    if (!passcode.trim()) {
+      toast.error("Master passcode is required to update resumption date");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await toggleStatus({
+        data: {
+          passcode: passcode.trim(),
+          active: status.active,
+          resumeDate: resumeDate.trim(),
+        },
+      });
+      if (res?.ok) {
+        setStatus({ active: status.active, resumeDate: resumeDate.trim() });
+        write(KEYS.serviceStatus, { active: status.active, resumeDate: resumeDate.trim() });
+        setPasscode("");
+        toast.success("Resumption date updated globally.");
+      }
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to update resumption date");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel
+      title="Master Service Switch (Global App Kill Switch)"
+      icon={status.active ? <Power className="h-4 w-4 text-primary" /> : <PowerOff className="h-4 w-4 text-destructive" />}
+    >
+      <div className="space-y-4">
+        <div
+          className={`flex items-center justify-between rounded-xl border p-4 ${
+            status.active
+              ? "border-primary/40 bg-primary/10"
+              : "border-destructive/40 bg-destructive/10"
+          }`}
+        >
+          <div>
+            <div className="text-xs uppercase font-bold tracking-wider text-muted-foreground">
+              Global Service Status
+            </div>
+            <div className={`text-base font-extrabold flex items-center gap-2 mt-0.5 ${status.active ? "text-primary" : "text-destructive"}`}>
+              <span className={`h-2.5 w-2.5 rounded-full ${status.active ? "bg-primary animate-pulse" : "bg-destructive animate-ping"}`} />
+              <span>{status.active ? "SERVICES ONLINE (ACTIVE)" : "SERVICES CLOSED (OFFLINE)"}</span>
+            </div>
+            {!status.active && status.resumeDate && (
+              <div className="text-xs text-muted-foreground mt-1">
+                Resumes on: <span className="font-semibold text-foreground">{status.resumeDate}</span>
+              </div>
+            )}
+          </div>
+          <Pill tone={status.active ? "primary" : "destructive"}>
+            {status.active ? "Active" : "Closed"}
+          </Pill>
+        </div>
+
+        <Field label="Expected Resumption Date / Notice (displayed on all phones when closed)">
+          <input
+            className={inputCls}
+            placeholder="e.g. November 15, 2026 at 08:00 AM"
+            value={resumeDate}
+            onChange={(e) => setResumeDate(e.target.value)}
+          />
+        </Field>
+
+        <Field label="Confirm Master Passcode (Required to toggle)">
+          <input
+            type="password"
+            className={inputCls}
+            placeholder="Enter master passcode"
+            value={passcode}
+            onChange={(e) => setPasscode(e.target.value)}
+          />
+        </Field>
+
+        <div className="flex flex-col sm:flex-row gap-2">
+          {status.active ? (
+            <Button
+              type="button"
+              onClick={() => handleToggle(false)}
+              disabled={busy}
+              className="flex-1 h-10 bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold text-sm"
+            >
+              {busy ? "Updating..." : "Turn Services OFF (Close App)"}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={() => handleToggle(true)}
+              disabled={busy}
+              className="flex-1 h-10 bg-primary hover:bg-primary/90 text-primary-foreground font-bold text-sm"
+            >
+              {busy ? "Updating..." : "Turn Services ON (Resume Operations)"}
+            </Button>
+          )}
+
+          {!status.active && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleUpdateDate}
+              disabled={busy}
+              className="h-10 text-xs sm:text-sm"
+            >
+              Update Resume Date
+            </Button>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function ExemptedNumbersCard() {
+  const [exempted, setExempted] = useExemptedNumbers();
+  const [phoneInput, setPhoneInput] = useState("");
+  const [noteInput, setNoteInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveExemptList = useServerFn(saveExemptedNumbers);
+
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const normalized = normalizePhone(phoneInput);
+    if (!normalized) {
+      toast.error("Enter a valid Safaricom number (07… or 01…)");
+      return;
+    }
+    if (exempted.some((ex) => normalizePhone(ex.phone) === normalized)) {
+      toast.error("This phone number is already exempted");
+      return;
+    }
+    const updated = [
+      { phone: normalized, note: noteInput.trim() || "VIP / Staff", addedAt: Date.now() },
+      ...exempted,
+    ];
+    setSaving(true);
+    try {
+      await saveExemptList({ data: { numbers: updated } });
+      setExempted(updated);
+      write(KEYS.exemptedNumbers, updated);
+      setPhoneInput("");
+      setNoteInput("");
+      toast.success(`+${normalized} added to exempted list! (Pays KES 0)`);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to save exempted number to cloud");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async (phone: string) => {
+    const updated = exempted.filter((ex) => ex.phone !== phone);
+    setSaving(true);
+    try {
+      await saveExemptList({ data: { numbers: updated } });
+      setExempted(updated);
+      write(KEYS.exemptedNumbers, updated);
+      toast.success(`Removed +${phone} from exemption`);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to update exemption list");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel title="Exempted Phone Numbers (Free VIP Access)" icon={<PhoneCall className="h-4 w-4" />}>
+      <div className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Numbers added here bypass M-Pesa payments entirely. When they tap Pay for any package, the prompt is skipped, access is granted immediately, and revenue records KES 0.
+        </p>
+
+        <form onSubmit={handleAdd} className="space-y-3 rounded-xl border border-border bg-secondary/20 p-3">
+          <div className="text-xs font-semibold uppercase tracking-wider text-foreground">
+            Exempt a New Number
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <input
+              className={inputCls}
+              placeholder="Phone (e.g. 0712345678)"
+              value={phoneInput}
+              onChange={(e) => setPhoneInput(e.target.value)}
+            />
+            <input
+              className={inputCls}
+              placeholder="Label/Note (e.g. Staff, VIP, Field Officer)"
+              value={noteInput}
+              onChange={(e) => setNoteInput(e.target.value)}
+            />
+          </div>
+          <Button
+            type="submit"
+            disabled={saving}
+            className="w-full h-9 bg-primary text-xs font-bold text-primary-foreground hover:brightness-110"
+          >
+            {saving ? "Saving..." : "Exempt Number (Grant Free Access)"}
+          </Button>
+        </form>
+
+        <Table
+          head={["Phone", "Note", "Added Date", "Action"]}
+          empty="No numbers currently exempted. All users pay normal package rates."
+          rows={exempted.map((item) => [
+            <span className="font-mono font-bold text-primary" key={item.phone}>+{item.phone}</span>,
+            <span key={item.phone + "-note"}>{item.note || "VIP"}</span>,
+            <span className="text-xs text-muted-foreground" key={item.phone + "-date"}>{new Date(item.addedAt).toLocaleDateString()}</span>,
+            <Button
+              key={item.phone + "-btn"}
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => handleRemove(item.phone)}
+              disabled={saving}
+              className="h-7 text-xs text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-1" />
+              Remove
+            </Button>,
+          ])}
+        />
+      </div>
+    </Panel>
+  );
+}
+
+function OffersCard() {
+  const [offers, setOffers] = useOffers();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [label, setLabel] = useState("");
+  const [hours, setHours] = useState("");
+  const [amount, setAmount] = useState("");
+  const [popular, setPopular] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const saveOffersCloud = useServerFn(saveCloudOffers);
+
+  const startEdit = (o: PassOffer) => {
+    setEditingId(o.id);
+    setLabel(o.label);
+    setHours(String(o.hours));
+    setAmount(String(o.amount));
+    setPopular(Boolean(o.popular));
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setLabel("");
+    setHours("");
+    setAmount("");
+    setPopular(false);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const h = parseFloat(hours);
+    const amt = parseFloat(amount);
+    if (!label.trim()) { toast.error("Enter offer label"); return; }
+    if (isNaN(h) || h <= 0) { toast.error("Enter valid hours"); return; }
+    if (isNaN(amt) || amt < 0) { toast.error("Enter valid price in KES"); return; }
+
+    let updated: PassOffer[];
+    if (editingId) {
+      updated = offers.map((o) =>
+        o.id === editingId ? { ...o, label: label.trim(), hours: h, amount: amt, popular } : o
+      );
+    } else {
+      const newId = "p" + Math.round(h) + "_" + uid().slice(0, 4).toLowerCase();
+      updated = [...offers, { id: newId, label: label.trim(), hours: h, amount: amt, popular }];
+    }
+
+    setSaving(true);
+    try {
+      await saveOffersCloud({ data: { offers: updated } });
+      setOffers(updated);
+      write(KEYS.offers, updated);
+      cancelEdit();
+      toast.success("Offers updated and synced across all customer phones!");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to save offers to cloud");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (offers.length <= 1) {
+      toast.error("You must keep at least one active offer for users to select.");
+      return;
+    }
+    const updated = offers.filter((o) => o.id !== id);
+    setSaving(true);
+    try {
+      await saveOffersCloud({ data: { offers: updated } });
+      setOffers(updated);
+      write(KEYS.offers, updated);
+      toast.success("Offer removed.");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to delete offer");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Panel title="Pricing & Roaming Offers Manager" icon={<Tag className="h-4 w-4" />}>
+      <div className="space-y-4">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Edit existing packages, adjust prices in KES, change pool hours, or add new offers. Changes sync simultaneously to all customer phones.
+        </p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {offers.map((o) => (
+            <div
+              key={o.id}
+              className={`rounded-xl border p-3.5 relative flex flex-col justify-between ${
+                o.popular ? "border-primary/50 bg-primary/5" : "border-border bg-card"
+              }`}
+            >
+              {o.popular && (
+                <span className="absolute -top-2.5 right-3 bg-primary text-primary-foreground font-bold text-[9px] uppercase px-2 py-0.5 rounded-full shadow-sm">
+                  Popular
+                </span>
+              )}
+              <div>
+                <div className="font-bold text-foreground text-sm">{o.label}</div>
+                <div className="mt-1 flex items-baseline gap-2">
+                  <span className="text-xl font-extrabold text-primary font-mono">KES {o.amount}</span>
+                  <span className="text-xs text-muted-foreground">({o.hours} Hours access)</span>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-1.5 pt-2 border-t border-border/50">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => startEdit(o)}
+                  className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                >
+                  <Edit2 className="h-3.5 w-3.5 mr-1" />
+                  Edit
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleDelete(o.id)}
+                  disabled={saving}
+                  className="h-7 text-xs text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1" />
+                  Delete
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <form onSubmit={handleSave} className="space-y-3 rounded-xl border border-border bg-secondary/20 p-3.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+              {editingId ? "Edit Offer" : "Add New Offer / Package"}
+            </span>
+            {editingId && (
+              <Button type="button" variant="ghost" size="sm" onClick={cancelEdit} className="h-6 text-xs text-muted-foreground">
+                Cancel Edit
+              </Button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <Field label="Label">
+              <input
+                className={inputCls}
+                placeholder="e.g. 15 Hours Access"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+              />
+            </Field>
+            <Field label="Duration (Hours)">
+              <input
+                type="number"
+                step="any"
+                className={inputCls}
+                placeholder="e.g. 15"
+                value={hours}
+                onChange={(e) => setHours(e.target.value)}
+              />
+            </Field>
+            <Field label="Price (KES)">
+              <input
+                type="number"
+                className={inputCls}
+                placeholder="e.g. 10"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+              />
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 text-xs text-foreground cursor-pointer pt-1">
+            <input
+              type="checkbox"
+              checked={popular}
+              onChange={(e) => setPopular(e.target.checked)}
+              className="h-4 w-4 rounded accent-primary"
+            />
+            <span>Mark as "Popular / Best Value" banner</span>
+          </label>
+          <Button
+            type="submit"
+            disabled={saving}
+            className="w-full h-9 bg-primary text-xs font-bold text-primary-foreground hover:brightness-110"
+          >
+            {saving ? "Saving..." : editingId ? "Update Offer" : "Add Offer"}
+          </Button>
+        </form>
+      </div>
+    </Panel>
   );
 }
 

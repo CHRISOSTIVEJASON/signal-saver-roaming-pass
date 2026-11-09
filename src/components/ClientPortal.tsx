@@ -158,11 +158,12 @@ function NetworkBadge() {
 
 function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   const [cfg] = useConfig();
-  const [passId, setPassId] = useState<string>("p30");
+  const [offers] = useOffers();
+  const [passId, setPassId] = useState<string>(offers[0]?.id || "p30");
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
-  const pass = getPass(passId);
+  const pass = getPass(passId, offers);
 
   const { state, ssid, direct } = useWifiState();
   const [device] = useStored<Device>(KEYS.device, defaultDevice);
@@ -193,9 +194,18 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
     const deviceId = getDeviceId();
     let currentTxnId = uid();
     try {
-      const r = await startPayment({ data: { phone: msisdn, passId: pass.id as 'p15' | 'p30', deviceId } });
+      const r = await startPayment({ data: { phone: msisdn, passId: pass.id, deviceId } });
       currentTxnId = r.id;
       const ref = r.ref || ("GN" + uid());
+
+      if ((r as any).exempted && (r as any).session) {
+        setBusy("VIP number recognized! Activating access...");
+        setTxns((p) => [{ id: r.id, phone: msisdn, amount: 0, passId, ref, at: Date.now(), status: "Activated", mode: "Exempted" as any }, ...p]);
+        onActivated((r as any).session);
+        toast.success(`🎉 Phone number exempted! Joined with ${pass.label} (KES 0 charged).`);
+        return;
+      }
+
       setTxns((p) => [{ id: r.id, phone: msisdn, amount: pass.amount, passId, ref, at: Date.now(), status: "Pending", mode: r.live ? "Live" : "Demo" }, ...p]);
 
       if (r.live) {
@@ -388,9 +398,10 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     return () => clearInterval(t);
   }, [session.id, state, connecting]);
 
+  const [offers] = useOffers();
   const remainingMs = tick(session.remainingMs, session.lastTick, Math.min(Date.now(), session.lastTick + 30_000), session.online);
   const pct = (remainingMs / session.totalMs) * 100;
-  const pass = getPass(session.passId);
+  const pass = getPass(session.passId, offers);
 
   return (
     <div className="space-y-5 text-center">

@@ -1,14 +1,25 @@
 export const SECURITY_CODE = "2006";
 export const DEFAULT_PASSCODE = "1234";
 
-export const PASSES = [
+export type PassOffer = {
+  id: string;
+  amount: number;
+  hours: number;
+  label: string;
+  popular?: boolean;
+};
+
+export const DEFAULT_PASSES: PassOffer[] = [
   { id: "p15", amount: 10, hours: 15, label: "15 Hours Access", popular: false },
   { id: "p30", amount: 18, hours: 30, label: "30 Hours Access", popular: true },
-] as const;
-export type PassId = (typeof PASSES)[number]["id"];
+];
 
-export function getPass(id: string) {
-  return PASSES.find((p) => p.id === id) ?? PASSES[0];
+export const PASSES: readonly PassOffer[] = DEFAULT_PASSES;
+export type PassId = string;
+
+export function getPass(id: string, customPasses?: PassOffer[]) {
+  const pool = (customPasses && customPasses.length > 0) ? customPasses : DEFAULT_PASSES;
+  return pool.find((p) => p.id === id) ?? pool[0];
 }
 
 /** Normalises Safaricom numbers (07.. / 01.. / 2547.. / +2541..) to 2547XXXXXXXX. Returns null if invalid. */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_PASSCODE, APP_VERSION } from "./rules";
+import { DEFAULT_PASSCODE, APP_VERSION, DEFAULT_PASSES, type PassOffer } from "./rules";
 import { cached, isSharedKey, saveShared, useCached } from "./cloud-cache";
 import type { MeshLink } from "./relay";
 import { toast } from "sonner";
@@ -55,6 +55,22 @@ export type Txn = {
   mode: "Live" | "Demo";
 };
 
+export type ServiceStatus = {
+  active: boolean;
+  resumeDate: string;
+  updatedAt?: number;
+};
+export const defaultServiceStatus: ServiceStatus = {
+  active: true,
+  resumeDate: "",
+};
+
+export type ExemptedNumber = {
+  phone: string;
+  note?: string;
+  addedAt: number;
+};
+
 export const KEYS = {
   passcode: "gn_passcode",
   config: "gn_payhero",
@@ -67,6 +83,9 @@ export const KEYS = {
   mesh: "gn_mesh_links",
   appVersion: "gn_app_version",
   beepAlerts: "gn_beep_alerts",
+  serviceStatus: "gn_service_status",
+  exemptedNumbers: "gn_exempted_numbers",
+  offers: "gn_offers",
 };
 
 export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "", latestVersion: "1.0.0", updateRequired: false };
@@ -223,4 +242,16 @@ export function setBeepAlertsEnabled(enabled: boolean) {
 
 export function useBeepAlerts() {
   return useStored<boolean>(KEYS.beepAlerts, true);
+}
+
+export function useServiceStatus() {
+  return useStored<ServiceStatus>(KEYS.serviceStatus, defaultServiceStatus);
+}
+
+export function useExemptedNumbers() {
+  return useStored<ExemptedNumber[]>(KEYS.exemptedNumbers, []);
+}
+
+export function useOffers() {
+  return useStored<PassOffer[]>(KEYS.offers, [...DEFAULT_PASSES]);
 }

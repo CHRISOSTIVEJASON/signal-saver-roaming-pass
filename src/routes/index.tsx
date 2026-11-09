@@ -4,14 +4,14 @@ import { verifyMasterPasscode } from "@/lib/cloud.functions";
 import { useServerFn } from "@tanstack/react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { ShieldCheck, X } from "lucide-react";
+import { ShieldCheck, X, AlertOctagon } from "lucide-react";
 import { toast } from "sonner";
 import { ClientPortal } from "@/components/ClientPortal";
 import { AdminDashboard } from "@/components/AdminDashboard";
 import { Button } from "@/components/ui/button";
 import { APP_VERSION, isUpdateRequired } from "@/lib/rules";
 import { DownloadGate, Onboarding, PermissionBlock, TestControls, UpdateGate, useConfig, useDevice } from "@/components/Gates";
-import { getPasscode, useAppVersion } from "@/lib/store";
+import { getPasscode, useAppVersion, useServiceStatus } from "@/lib/store";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -25,6 +25,7 @@ function Index() {
   const [device, setDevice] = useDevice();
   const [cfg] = useConfig();
   const [runningVer, setRunningVer] = useAppVersion();
+  const [serviceStatus] = useServiceStatus();
   const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
 
   const verifyCloudPasscode = useServerFn(verifyMasterPasscode);
@@ -161,6 +162,42 @@ function Index() {
           </div>
         </div>
       )}
+
+      {!serviceStatus.active && !admin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 p-4 backdrop-blur-md">
+          <div className="w-full max-w-md rounded-2xl border border-destructive/40 bg-card p-6 text-center shadow-2xl">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-destructive/15 text-destructive animate-pulse">
+              <AlertOctagon className="h-9 w-9" />
+            </div>
+            <h2 className="text-xl font-extrabold tracking-wider text-destructive uppercase">
+              SERVICES CLOSED
+            </h2>
+            <div className="my-4 rounded-xl border border-border bg-muted/40 p-4 text-sm leading-relaxed">
+              <p className="font-semibold text-foreground uppercase tracking-wide">
+                SERVICES CLOSED... IT WILL RESUME ON THIS DATE:
+              </p>
+              <div className="mt-2 text-base font-bold text-primary">
+                {serviceStatus.resumeDate ? serviceStatus.resumeDate : "To Be Announced by Administrator"}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Services have been temporarily turned off. All stamped networks and active passes remain securely saved.
+            </p>
+            <div className="mt-6 pt-4 border-t border-border flex justify-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPrompt(true)}
+                className="text-xs text-muted-foreground/60 hover:text-foreground flex items-center gap-1.5"
+              >
+                <ShieldCheck className="h-4 w-4" />
+                <span>Administrator Access</span>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </main>
   );
 }
