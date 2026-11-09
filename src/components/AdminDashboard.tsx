@@ -142,7 +142,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const tabs = [
     { id: "pool", label: "Wi-Fi Pool", icon: <Wifi className="h-4 w-4" /> },
     { id: "roam", label: "Live Roaming", icon: <Radio className="h-4 w-4" /> },
-    { id: "pay", label: "M-Pesa & PayHero", icon: <Wallet className="h-4 w-4" /> },
+    { id: "pay", label: "M-Pesa & FinoQ", icon: <Wallet className="h-4 w-4" /> },
     { id: "set", label: "Settings & APK", icon: <Settings className="h-4 w-4" /> },
   ] as const;
 
@@ -209,7 +209,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
         <div className="space-y-3">
           <p className="px-1 text-xs text-muted-foreground">Choose an action to open its focused settings dialog.</p>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            <AdminAction icon={<Wallet className="h-5 w-5" />} label="PayHero / M-Pesa" detail="Gateway and payment mode" onClick={() => setSettingsDialog("payhero")} />
+            <AdminAction icon={<Wallet className="h-5 w-5" />} label="FinoQ / M-Pesa" detail="Gateway and payment mode" onClick={() => setSettingsDialog("payhero")} />
             <AdminAction icon={<Tag className="h-5 w-5" />} label="Pass Packages" detail="Pricing and durations" onClick={() => setSettingsDialog("offers")} />
             <AdminAction icon={<PhoneCall className="h-5 w-5" />} label="VIP Exemptions" detail="Free-access phone list" onClick={() => setSettingsDialog("exempted")} />
             <AdminAction icon={<Ban className="h-5 w-5" />} label="Blocked Users" detail={`${blocked.length} numbers blocked`} onClick={() => setSettingsDialog("blocked")} tone={blocked.length > 0 ? "danger" : "default"} />
@@ -248,7 +248,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       </Dialog>
       <Dialog open={settingsDialog === "payhero"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
         <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader><DialogTitle>PayHero / M-Pesa</DialogTitle><DialogDescription>Configure payment mode and gateway credentials.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>FinoQ / M-Pesa</DialogTitle><DialogDescription>Configure payment mode and gateway credentials.</DialogDescription></DialogHeader>
           <PayHeroCard />
         </DialogContent>
       </Dialog>
@@ -873,14 +873,14 @@ function PayHeroCard() {
   const confirmSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passcode.trim() !== "2006") {
-      toast.error("Incorrect security code. Changing PayHero details requires code 2006.");
+      toast.error("Incorrect security code. Changing FinoQ details requires code 2006.");
       return;
     }
     setSaving(true);
     try {
       setSaved(c);
       await saveCloudConfig({ data: c });
-      toast.success(c.live ? "Live FinoQ / PayHero STK Push saved & activated!" : "Demo mode saved");
+      toast.success(c.live ? "Live FinoQ STK Push saved & activated!" : "Demo mode saved");
       setAuthOpen(false);
       setPasscode("");
     } catch (err) {
@@ -892,7 +892,7 @@ function PayHeroCard() {
   };
 
   return (
-    <Panel title="FinoQ / PayHero M-Pesa Configuration" icon={<Wallet className="h-4 w-4" />}>
+    <Panel title="FinoQ M-Pesa Configuration" icon={<Wallet className="h-4 w-4" />}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-background p-1 text-sm">
           <Button
@@ -909,7 +909,7 @@ function PayHeroCard() {
             onClick={() => set("live")(true)}
             className="rounded-md py-2 font-medium"
           >
-            Live PayHero STK Push
+            Live FinoQ STK Push
           </Button>
         </div>
 
@@ -926,14 +926,14 @@ function PayHeroCard() {
         </div>
 
         <Button onClick={handleSaveClick} disabled={saving} className="h-10 w-full font-medium">
-          {saving ? "Saving to Cloud…" : "Save PayHero Settings"}
+          {saving ? "Saving to Cloud…" : "Save FinoQ Settings"}
         </Button>
       </div>
 
       {authOpen && (
         <form onSubmit={confirmSave} className="mt-4 space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-primary">Security Code Required</div>
-          <p className="text-xs text-muted-foreground">Enter security code <strong>2006</strong> to confirm changes to live PayHero settings.</p>
+          <p className="text-xs text-muted-foreground">Enter security code <strong>2006</strong> to confirm changes to live FinoQ settings.</p>
           <input
             type="password"
             autoFocus
