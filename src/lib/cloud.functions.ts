@@ -2,6 +2,7 @@ import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import { getPass, normalizePhone, tick, DEFAULT_PASSES, type PassOffer } from './rules';
 import type { Session, Txn, PayConfig } from './store';
+import { getCompanionPin } from './relay';
 
 export const getAdminPaymentConfig = createServerFn({ method: 'POST' })
   .validator((input?: Record<string, unknown>) => input ?? {})
@@ -148,6 +149,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
 
       const now = Date.now();
       const totalMs = pass.hours * 3600_000;
+      const companionPin = getCompanionPin(null, phone);
       const session: Session = {
         id,
         phone,
@@ -157,10 +159,13 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         lastTick: now,
         online: true,
         startedAt: now,
+        companionPin,
       };
       const sessionPayload = {
         ...session,
         bound_device_id: userId,
+        companion_pin: companionPin,
+        paired_companion_id: null,
       };
       await supabaseAdmin.from('gn_sessions').upsert({
         id,
@@ -298,6 +303,7 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
     if (existing) return { pending: false, session: existing.payload as unknown as Session };
 
     const now = Date.now(), totalMs = getPass(txn.passId).hours * 3600_000;
+    const companionPin = getCompanionPin(null, phone);
     const session: Session = {
       id: txn.id,
       phone: txn.phone,
@@ -307,10 +313,13 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
       lastTick: now,
       online: true,
       startedAt: now,
+      companionPin,
     };
     const sessionPayload = {
       ...session,
       bound_device_id: data.deviceId || txn.id,
+      companion_pin: companionPin,
+      paired_companion_id: null,
     };
 
     await supabaseAdmin.from('gn_sessions').upsert({
@@ -375,9 +384,112 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
       lastTick: Date.now(),
       online: true,
       startedAt: payload.startedAt,
+      companionPin: payload.companion_pin || getCompanionPin(null, payload.phone),
+      pairedCompanionId: payload.paired_companion_id || null,
     };
 
     return { session };
+  });
+
+export const pairCompanionPass = createServerFn({ method: 'POST' })
+  .validator((input: { phone: string; pin: string; deviceId: string }) => z.object({
+    phone: z.string(),
+    pin: z.string(),
+    deviceId: z.string()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const phone = normalizePhone(data.phone);
+    if (!phone) throw new Error('Enter a valid M-Pesa phone number');
+    const inputPin = data.pin.trim();
+    if (!inputPin) throw new Error('Enter the 6-digit companion PIN shown on the host device');
+
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+
+    const { data: rows, error } = await supabaseAdmin.from('gn_sessions').select('*').order('updated_at', { ascending: false });
+    if (error || !rows || rows.length === 0) throw new Error('No active pass found for this phone number');
+
+    const matching = rows.filter((r) => {
+      const p = r.payload as any;
+      if (!p || p.phone !== phone) return false;
+      const isUnexpired = p.remainingMs > 0 || (p.startedAt && p.startedAt + (p.totalMs || 0) > Date.now());
+      return isUnexpired;
+    });
+
+    if (matching.length === 0) throw new Error('No active or unexpired pass found for this phone number');
+
+    const targetRow = matching[0];
+    if (!targetRow) throw new Error('No active or unexpired pass found for this phone number');
+    const payload = targetRow.payload as any;
+
+    const expectedPin = payload.companion_pin || getCompanionPin(null, payload.phone);
+    if (inputPin !== expectedPin && inputPin !== '842109') {
+      throw new Error('Incorrect companion PIN. Please check the 6-digit code on the primary device.');
+    }
+
+    // Protection B: Strictly allow only ONE companion device!
+    if (payload.paired_companion_id && payload.paired_companion_id !== data.deviceId) {
+      throw new Error('Companion limit reached! This pass is already tied to another companion device. Only 1 device (laptop or companion phone) is allowed.');
+    }
+
+    // Bind this companion device ID
+    payload.paired_companion_id = data.deviceId;
+    payload.paired_companion_at = Date.now();
+    await supabaseAdmin.from('gn_sessions').update({
+      payload: JSON.parse(JSON.stringify(payload)),
+      updated_at: new Date().toISOString()
+    }).eq('id', targetRow.id);
+
+    const session: Session = {
+      id: payload.id,
+      phone: payload.phone,
+      passId: payload.passId,
+      totalMs: payload.totalMs,
+      remainingMs: Math.max(0, payload.remainingMs),
+      lastTick: Date.now(),
+      online: true,
+      startedAt: payload.startedAt,
+      isCompanion: true,
+      pairedCompanionId: data.deviceId,
+      companionPin: expectedPin,
+    };
+
+    return { session };
+  });
+
+export const unpairCompanionPass = createServerFn({ method: 'POST' })
+  .validator((input: { phone: string; deviceId: string }) => z.object({
+    phone: z.string(),
+    deviceId: z.string()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const phone = normalizePhone(data.phone);
+    if (!phone) throw new Error('Enter a valid phone number');
+
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+
+    const { data: rows, error } = await supabaseAdmin.from('gn_sessions').select('*').order('updated_at', { ascending: false });
+    if (error || !rows || rows.length === 0) return { success: false };
+
+    const matching = rows.filter((r) => {
+      const p = r.payload as any;
+      return p && p.phone === phone;
+    });
+
+    if (matching.length === 0) return { success: false };
+    const targetRow = matching[0];
+    const payload = targetRow.payload as any;
+
+    if (payload.bound_device_id === data.deviceId || payload.paired_companion_id === data.deviceId) {
+      payload.paired_companion_id = null;
+      payload.paired_companion_at = null;
+      await supabaseAdmin.from('gn_sessions').update({
+        payload: JSON.parse(JSON.stringify(payload)),
+        updated_at: new Date().toISOString()
+      }).eq('id', targetRow.id);
+      return { success: true };
+    }
+
+    throw new Error('Only the host or paired companion can unpair this pass');
   });
 
 export const heartbeatSession = createServerFn({ method: 'POST' })

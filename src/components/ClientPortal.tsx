@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users } from "lucide-react";
+import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
-import { startCloudPayment, confirmCloudPayment, restoreCloudPass } from "@/lib/cloud.functions";
+import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass } from "@/lib/cloud.functions";
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
@@ -179,9 +179,14 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   const startPayment = useServerFn(startCloudPayment);
   const confirmPayment = useServerFn(confirmCloudPayment);
   const restorePass = useServerFn(restoreCloudPass);
+  const pairCompanion = useServerFn(pairCompanionPass);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restorePhone, setRestorePhone] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
+  const [pairPhone, setPairPhone] = useState("");
+  const [pairPin, setPairPin] = useState("");
+  const [pairBusy, setPairBusy] = useState(false);
 
   const updateTxn = (id: string, patch: Partial<Txn>) =>
     setTxns((p) => p.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -282,6 +287,32 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
     }
   }
 
+  async function handlePairCompanion(e: React.FormEvent) {
+    e.preventDefault();
+    const msisdn = normalizePhone(pairPhone);
+    if (!msisdn) {
+      toast.error("Enter a valid host phone number (07… or 01…)");
+      return;
+    }
+    if (!pairPin.trim()) {
+      toast.error("Enter the 6-digit companion PIN shown on the host device");
+      return;
+    }
+    setPairBusy(true);
+    try {
+      const res = await pairCompanion({ data: { phone: msisdn, pin: pairPin.trim(), deviceId: getDeviceId() } });
+      if (res?.session) {
+        onActivated(res.session);
+        toast.success("🎉 Companion tied successfully! Locked to this device.");
+        setPairOpen(false);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Unable to pair companion");
+    } finally {
+      setPairBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col items-center justify-center gap-2">
@@ -329,14 +360,23 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
-        <div className="pt-2 text-center">
+        <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
           <Button
             variant="ghost"
             type="button"
             onClick={() => setRestoreOpen(true)}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
-            Reinstalled app? Restore Active Pass
+            Reinstalled app? Restore Pass
+          </Button>
+          <span className="hidden sm:inline text-muted-foreground/30">•</span>
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => setPairOpen(true)}
+            className="text-xs text-primary font-medium hover:underline flex items-center gap-1.5"
+          >
+            <Laptop className="h-3.5 w-3.5" /> Pair Companion (Laptop / Phone)
           </Button>
         </div>
       </div>
@@ -370,23 +410,90 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           </div>
         </div>
       )}
+      {pairOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setPairOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Laptop className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold text-base">Pair Companion Device</h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setPairOpen(false)} aria-label="Close"><X className="h-4 w-4" /></Button>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Ride on an active pass from your primary phone without paying twice. <strong>Protection B:</strong> Exactly <strong>1 companion device</strong> is permitted. Additional devices are blocked.
+            </p>
+            <form onSubmit={handlePairCompanion} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-medium text-muted-foreground uppercase font-mono tracking-wider">Host Phone Number</label>
+                <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
+                  <Smartphone className="h-4 w-4 text-muted-foreground" />
+                  <input
+                    autoFocus
+                    type="tel"
+                    placeholder="07XX XXX XXX"
+                    value={pairPhone}
+                    onChange={(e) => setPairPhone(e.target.value)}
+                    className="h-10 w-full bg-transparent font-mono text-sm outline-none"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-medium text-muted-foreground uppercase font-mono tracking-wider">6-Digit Companion PIN</label>
+                <input
+                  type="text"
+                  maxLength={8}
+                  placeholder="e.g. 842109"
+                  value={pairPin}
+                  onChange={(e) => setPairPin(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-base font-bold tracking-widest outline-none focus:ring-2 focus:ring-ring"
+                  required
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <Button type="button" onClick={() => setPairOpen(false)} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
+                <Button type="submit" disabled={pairBusy} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+                  {pairBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pair & Unlock"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 
-function CompanionSharing({ session }: { session: Session }) {
+function CompanionSharing({ session, onUpdateSession }: { session: Session; onUpdateSession?: (patch: Partial<Session>) => void }) {
   const [deviceState] = useStored<Device>(KEYS.device, defaultDevice);
   const [exemptedList] = useExemptedNumbers();
   const [copied, setCopied] = useState(false);
+  const [unpairing, setUnpairing] = useState(false);
+  const unpairCompanion = useServerFn(unpairCompanionPass);
   const isNative = Capacitor.isNativePlatform();
 
   const networkName = deviceState.relay?.networkName || ("GN-SHARE-" + (session.phone.replace(/\D/g, "").slice(-4) || "PASS"));
-  const pin = getCompanionPin(deviceState.relay?.passphrase, session.phone);
+  const pin = session.companionPin || getCompanionPin(deviceState.relay?.passphrase, session.phone);
   const peerCount = deviceState.relay?.peerCount ?? 0;
   
   const normPhone = normalizePhone(session.phone);
   const isExempt = exemptedList.some((e) => e.phone === normPhone || e.phone === session.phone);
+  const isTied = Boolean(session.pairedCompanionId);
+
+  const handleUnpair = async () => {
+    setUnpairing(true);
+    try {
+      await unpairCompanion({ data: { phone: session.phone, deviceId: getDeviceId() } });
+      toast.success("Companion slot released. You can now pair a different device.");
+      onUpdateSession?.({ pairedCompanionId: null });
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to release companion");
+    } finally {
+      setUnpairing(false);
+    }
+  };
 
   const copyPin = () => {
     try {
@@ -452,6 +559,45 @@ function CompanionSharing({ session }: { session: Session }) {
                 {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
               </Button>
             </div>
+          </div>
+
+          {/* Protection B Device Binding Status */}
+          <div className="rounded-lg border border-border/40 bg-secondary/30 p-2.5 text-[11px] space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Protection B: 1-Device Lock
+              </span>
+              {isTied ? (
+                <span className="rounded-full bg-primary/15 text-primary px-2 py-0.5 text-[10px] font-semibold border border-primary/30">
+                  🔒 1 Companion Locked
+                </span>
+              ) : (
+                <span className="rounded-full bg-amber-500/15 text-amber-400 px-2 py-0.5 text-[10px] font-medium border border-amber-500/30">
+                  1 Companion Slot Available
+                </span>
+              )}
+            </div>
+            <p className="text-muted-foreground text-[11px] leading-relaxed">
+              {isTied ? (
+                <>Tied to your paired companion device. Any other device entering this PIN will be <strong>blocked</strong>.</>
+              ) : (
+                <>On your laptop or 2nd phone, open the portal and tap <strong>Pair Companion</strong> using PIN <strong className="text-primary font-mono">{pin}</strong> to lock to that device.</>
+              )}
+            </p>
+            {isTied && (
+              <div className="pt-1 flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={unpairing}
+                  onClick={handleUnpair}
+                  className="h-7 text-[10px] rounded-md border-border text-muted-foreground hover:text-foreground"
+                >
+                  {unpairing ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null} Release / Switch Device
+                </Button>
+              </div>
+            )}
           </div>
 
           <div className="rounded-lg bg-muted/40 p-2.5 text-[11px] space-y-1.5 text-muted-foreground border border-border/30">
@@ -557,7 +703,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
       <div className="h-2 overflow-hidden rounded-full bg-muted">
         <div className={`h-full transition-all ${session.online ? "bg-primary" : "bg-warning"}`} style={{ width: `${pct}%` }} />
       </div>
-            <CompanionSharing session={session} />
+            <CompanionSharing session={session} onUpdateSession={(patch) => update(() => patch)} />
       <div className="pt-2 flex flex-col gap-2">
         <Button variant="ghost" onClick={onEnd} className="text-xs text-muted-foreground underline-offset-4 hover:underline">Buy another pass</Button>
       </div>

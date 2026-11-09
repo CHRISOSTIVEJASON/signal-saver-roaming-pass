@@ -43,6 +43,9 @@ export type Session = {
   lastTick: number;
   online: boolean;
   startedAt: number;
+  isCompanion?: boolean;
+  pairedCompanionId?: string | null;
+  companionPin?: string;
 };
 export type Txn = {
   id: string;

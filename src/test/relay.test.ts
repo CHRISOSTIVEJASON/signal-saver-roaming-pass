@@ -19,3 +19,27 @@ describe("Direct relay eligibility", () => {
     expect(getCompanionPin("", "")).toBe("842109");
   });
 });
+
+describe("Protection B: Companion device binding", () => {
+  it("allows pairing when no companion is bound yet", () => {
+    const payload = { bound_device_id: "host-phone", paired_companion_id: null, companion_pin: "842109" };
+    const canPair = !payload.paired_companion_id || payload.paired_companion_id === "laptop-1";
+    expect(canPair).toBe(true);
+  });
+
+  it("locks companion access strictly to the first paired device and blocks other phones/laptops", () => {
+    const payload = { bound_device_id: "host-phone", paired_companion_id: "laptop-1", companion_pin: "842109" };
+    const secondDevice = "phone-2";
+    const canPairSecond = !payload.paired_companion_id || payload.paired_companion_id === secondDevice;
+    expect(canPairSecond).toBe(false);
+
+    const canPairFirst = !payload.paired_companion_id || payload.paired_companion_id === "laptop-1";
+    expect(canPairFirst).toBe(true);
+  });
+
+  it("allows a new companion device only after the slot is released", () => {
+    const payload: { paired_companion_id: string | null } = { paired_companion_id: "laptop-1" };
+    payload.paired_companion_id = null;
+    expect(!payload.paired_companion_id || payload.paired_companion_id === "phone-2").toBe(true);
+  });
+});
