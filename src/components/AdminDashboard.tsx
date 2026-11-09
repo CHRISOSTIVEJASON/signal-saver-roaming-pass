@@ -863,8 +863,8 @@ function PayHeroCard() {
   const set = (k: keyof PayConfig) => (v: string | boolean) => setC((prev) => ({ ...prev, [k]: v }));
 
   const handleSaveClick = () => {
-    if (c.live && (!c.channelId || !(c.apiToken || (c.username && c.password)))) {
-      toast.error("Live mode needs a Channel ID and either an API token or username + password");
+    if (c.live && !(c.apiToken || (c.username && c.password))) {
+      toast.error("Live mode requires an API Token or username + password");
       return;
     }
     setAuthOpen(true);
@@ -880,7 +880,7 @@ function PayHeroCard() {
     try {
       setSaved(c);
       await saveCloudConfig({ data: c });
-      toast.success(c.live ? "Live PayHero STK Push saved & activated!" : "PayHero Demo mode saved");
+      toast.success(c.live ? "Live FinoQ / PayHero STK Push saved & activated!" : "Demo mode saved");
       setAuthOpen(false);
       setPasscode("");
     } catch (err) {
@@ -892,7 +892,7 @@ function PayHeroCard() {
   };
 
   return (
-    <Panel title="PayHero M-Pesa Configuration" icon={<Wallet className="h-4 w-4" />}>
+    <Panel title="FinoQ / PayHero M-Pesa Configuration" icon={<Wallet className="h-4 w-4" />}>
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-background p-1 text-sm">
           <Button
@@ -914,7 +914,7 @@ function PayHeroCard() {
         </div>
 
         <div className="space-y-3">
-          <Field label="Channel ID (PayHero Channel ID)"><input className={inputCls + " font-mono"} value={c.channelId} placeholder="e.g. 1234" onChange={(e) => set("channelId")(e.target.value)} /></Field>
+          <Field label="Channel ID (Optional — leave empty for FinoQ Wallet collection / credit only)"><input className={inputCls + " font-mono"} value={c.channelId} placeholder="Leave blank for FinoQ Wallet, or enter Channel ID" onChange={(e) => set("channelId")(e.target.value)} /></Field>
           <Field label="API Token (Basic / API Key)"><input type="password" className={inputCls + " font-mono"} value={c.apiToken} placeholder="API Token or Basic Key" onChange={(e) => set("apiToken")(e.target.value)} /></Field>
           <div className="relative flex items-center justify-center">
             <span className="bg-card px-2 text-xs text-muted-foreground">OR HTTP Basic Auth</span>

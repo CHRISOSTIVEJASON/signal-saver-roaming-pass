@@ -5,7 +5,7 @@ const creds = z.object({
   apiToken: z.string().max(500).optional().default(""),
   username: z.string().max(200).optional().default(""),
   password: z.string().max(200).optional().default(""),
-  channelId: z.string().min(1).max(50),
+  channelId: z.string().max(50).optional().default(""),
 });
 
 function authHeader(c: z.infer<typeof creds>) {
@@ -34,7 +34,9 @@ export const initiateStkPush = createServerFn({ method: "POST" })
         body: JSON.stringify({
           amount: data.amount,
           phone_number: data.phone,
-          channel_id: Number(data.channelId),
+          ...(data.channelId && Number(data.channelId) > 0
+            ? { channel_id: Number(data.channelId) }
+            : { network_code: "63902" }),
           provider: "m-pesa",
           external_reference: data.reference,
           callback_url: "https://example.com/payhero-callback",

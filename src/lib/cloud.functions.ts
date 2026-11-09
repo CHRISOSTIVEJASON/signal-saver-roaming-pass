@@ -236,26 +236,33 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
 
     if (live) {
       const { data: credentials } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
-      if (!credentials?.channel_id || !(credentials.api_token || (credentials.username && credentials.password))) {
-        throw new Error('Merchant has not configured live payment details yet. Set Channel ID and API Key in Admin Console.');
+      if (!(credentials?.api_token || (credentials?.username && credentials?.password))) {
+        throw new Error('Merchant has not configured live payment credentials in Admin Console. Set API Key or Token.');
       }
       const authorization = getPayHeroAuthHeader(credentials);
-      const channelNum = Number(String(credentials.channel_id).trim());
-      if (isNaN(channelNum) || channelNum <= 0) {
-        throw new Error('Invalid PayHero Channel ID configured in Admin Console.');
+      const rawChannel = String(credentials?.channel_id || '').trim();
+      const channelNum = Number(rawChannel);
+      const isChannelMode = Boolean(rawChannel) && !isNaN(channelNum) && channelNum > 0;
+
+      const paymentBody: Record<string, unknown> = {
+        amount: pass.amount,
+        phone_number: phone,
+        provider: 'm-pesa',
+        external_reference: ref,
+        callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback'
+      };
+
+      if (isChannelMode) {
+        paymentBody.channel_id = channelNum;
+      } else {
+        // FinoQ / PayHero Wallet collection: credit directly into account wallet
+        paymentBody.network_code = '63902';
       }
 
       const response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', Authorization: authorization },
-        body: JSON.stringify({
-          amount: pass.amount,
-          phone_number: phone,
-          channel_id: channelNum,
-          provider: 'm-pesa',
-          external_reference: ref,
-          callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback'
-        })
+        body: JSON.stringify(paymentBody)
       });
       const result = (await response.json().catch(() => ({}))) as any;
       const returnedRef = result?.reference || result?.CheckoutRequestID || result?.response?.CheckoutRequestID || result?.data?.reference || result?.external_reference || ref;
@@ -779,14 +786,7 @@ export const getServiceStatus = createServerFn({ method: 'POST' })
       const { data } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
       if (data?.api_token) {
         const parsed = JSON.parse(data.api_token);
-        // Automatically reopen services once so user is not locked out by previous test state
-        if (parsed.active === false && !parsed.reopenedNov2026) {
-          await supabaseAdmin.from('gn_payment_credentials').upsert({
-            id: '__gn_service_status__',
-            api_token: JSON.stringify({ active: true, resumeDate: '', updatedAt: Date.now(), reopenedNov2026: true })
-          });
-          return { active: true, resumeDate: '', updatedAt: Date.now() };
-        }
+
         return {
           active: typeof parsed.active === 'boolean' ? parsed.active : true,
           resumeDate: String(parsed.resumeDate || ''),
