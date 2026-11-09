@@ -1,6 +1,6 @@
 import { getPass, DEFAULT_PASSES, type PassOffer } from './rules';
 import type { Session, Txn } from './store';
-import { getCompanionPin } from './relay';
+import { getCompanionPin, generateCompanionPin } from './relay';
 import { getPayHeroAuthHeader } from './payhero-auth';
 
 type Admin = (typeof import('@/integrations/supabase/client.server'))['supabaseAdmin'];
@@ -42,7 +42,7 @@ export async function activateTxn(db: Admin, txn: Txn, userId: string, deviceId?
   }
   const pass = getPass(txn.passId, await loadOffers(db));
   const now = Date.now(), totalMs = pass.hours * 3600_000;
-  const companionPin = getCompanionPin(null, txn.phone);
+  const companionPin = generateCompanionPin();
   const session: Session = { id: txn.id, phone: txn.phone, passId: pass.id, totalMs, remainingMs: totalMs, lastTick: now, online: true, startedAt: now, companionPin };
   const { error } = await db.from('gn_sessions').upsert({
     id: txn.id, user_id: userId,

@@ -196,12 +196,30 @@ export function recordRelayTick(phone: string) {
 
 export function getDeviceId(): string {
   if (typeof window === "undefined") return "browser-device";
-  let id = localStorage.getItem("gn_device_id");
-  if (!id) {
-    id = "dev-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
-    try { localStorage.setItem("gn_device_id", id); } catch {}
-  }
+  let id: string | null = null;
+  try {
+    id = localStorage.getItem("gn_device_id");
+    if (id && id.trim()) return id.trim();
+  } catch {}
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)gn_device_id=([^;]+)/);
+    if (match && match[1]) {
+      id = decodeURIComponent(match[1]);
+      try { localStorage.setItem("gn_device_id", id); } catch {}
+      return id;
+    }
+  } catch {}
+  id = "dev-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+  try { localStorage.setItem("gn_device_id", id); } catch {}
+  try { document.cookie = "gn_device_id=" + encodeURIComponent(id) + "; max-age=31536000; path=/; SameSite=Lax"; } catch {}
   return id;
+}
+
+export function saveDeviceId(id: string) {
+  if (typeof window === "undefined" || !id) return;
+  const clean = id.trim();
+  try { localStorage.setItem("gn_device_id", clean); } catch {}
+  try { document.cookie = "gn_device_id=" + encodeURIComponent(clean) + "; max-age=31536000; path=/; SameSite=Lax"; } catch {}
 }
 
 export function getRunningAppVersion(): string {

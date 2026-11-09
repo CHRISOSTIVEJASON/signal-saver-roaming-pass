@@ -52,6 +52,21 @@ public class RelayVpnService extends VpnService {
             hostPort = intent.getIntExtra(EXTRA_HOST_PORT, 8282);
         }
 
+        if ("192.168.49.1".equals(hostIp)) {
+            try {
+                android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+                if (wm != null) {
+                    android.net.DhcpInfo dhcp = wm.getDhcpInfo();
+                    if (dhcp != null && dhcp.gateway != 0) {
+                        String detectedGw = android.text.format.Formatter.formatIpAddress(dhcp.gateway);
+                        if (detectedGw != null && !detectedGw.equals("0.0.0.0")) {
+                            hostIp = detectedGw;
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+
         startForegroundNotification("Global Networks Dual-Path Tunnel", "Native TUN engine (lwIP/tun2socks) active to " + hostIp + ":" + hostPort);
         startVpnTunnel();
         return START_STICKY;

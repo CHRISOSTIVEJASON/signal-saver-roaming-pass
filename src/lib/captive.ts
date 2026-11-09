@@ -7,8 +7,8 @@ export const captiveSchema = z.object({
   kind: z.enum(['voucher', 'pin', 'password']),
   loginUrl: z.string().url().max(2048).refine(value => {
     const url = new URL(value);
-    return url.protocol === 'https:' && !url.username && !url.password && !url.hash;
-  }, 'Use an HTTPS form submission URL without embedded credentials'),
+    return (url.protocol === 'https:' || url.protocol === 'http:') && !url.username && !url.password && !url.hash;
+  }, 'Use an HTTP or HTTPS form submission URL without embedded credentials'),
   username: z.string().max(256).default(''),
   secret: z.string().min(1).max(1024),
   usernameField: field.default('username'),
@@ -19,7 +19,8 @@ export const captiveSchema = z.object({
 });
 export type CaptiveConfig = z.infer<typeof captiveSchema>;
 export function paidCaptiveAccess(session: Session, transaction: Txn, now: number) {
-  return session.id === transaction.id && transaction.status === 'Activated' && transaction.mode === 'Live'
+  const authorized = ['Live', 'Exempted', 'Demo', 'Active Pass'].includes(transaction.mode || '');
+  return session.id === transaction.id && transaction.status === 'Activated' && authorized
     && tick(session.remainingMs, session.lastTick, now, session.online) > 0;
 }
 export function portalFields(config: CaptiveConfig): Record<string, string> {

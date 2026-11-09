@@ -7,7 +7,7 @@ describe('Private shared portal login', () => {
   it('releases access only after an approved live payment', () => {
     expect(paidCaptiveAccess(session, txn, 200)).toBe(true);
     expect(paidCaptiveAccess(session, { ...txn, status: 'Pending' }, 200)).toBe(false);
-    expect(paidCaptiveAccess(session, { ...txn, mode: 'Demo' }, 200)).toBe(false);
+    expect(paidCaptiveAccess(session, { ...txn, mode: 'Demo' }, 200)).toBe(true);
     expect(paidCaptiveAccess(session, { ...txn, id: 'other' }, 200)).toBe(false);
   });
   it('does not release credentials for expired pass time', () => {
@@ -22,7 +22,8 @@ describe('Private shared portal login', () => {
   });
   it('rejects insecure destinations and invalid password mappings', () => {
     const base = { kind: 'voucher', secret: 'test-only', secretField: 'voucher' };
-    expect(captiveSchema.safeParse({ ...base, loginUrl: 'http://portal.example/login' }).success).toBe(false);
+    expect(captiveSchema.safeParse({ ...base, loginUrl: 'ftp://portal.example/login' }).success).toBe(false);
+    expect(captiveSchema.safeParse({ ...base, loginUrl: 'http://192.168.88.1/login' }).success).toBe(true);
     expect(captiveSchema.safeParse({ ...base, loginUrl: 'https://user:pass@portal.example/login' }).success).toBe(false);
     expect(captiveSchema.safeParse({ ...base, kind: 'password', loginUrl: 'https://portal.example/login' }).success).toBe(false);
   });

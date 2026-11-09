@@ -347,7 +347,24 @@ public class GlobalRelayPlugin extends Plugin {
 
     @PluginMethod
     public void startClientAutoRouter(PluginCall call) {
-        String host = call.getString("hostIp", "192.168.49.1");
+        String host = call.getString("hostIp");
+        if (host == null || host.isEmpty() || "192.168.49.1".equals(host)) {
+            try {
+                WifiManager wm = (WifiManager) getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wm != null) {
+                    android.net.DhcpInfo dhcp = wm.getDhcpInfo();
+                    if (dhcp != null && dhcp.gateway != 0) {
+                        String detectedGw = android.text.format.Formatter.formatIpAddress(dhcp.gateway);
+                        if (detectedGw != null && !detectedGw.equals("0.0.0.0")) {
+                            host = detectedGw;
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+        if (host == null || host.isEmpty()) {
+            host = "192.168.49.1";
+        }
         int port = call.getInt("hostPort", 8282);
 
         Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
@@ -685,6 +702,33 @@ public class GlobalRelayPlugin extends Plugin {
             res.put("phone", phone != null ? phone : "");
         } catch (Exception ignored) {
             res.put("phone", "");
+        }
+        call.resolve(res);
+    }
+
+    @PluginMethod
+    public void saveDeviceId(PluginCall call) {
+        String deviceId = call.getString("deviceId");
+        if (deviceId != null && !deviceId.isEmpty()) {
+            try {
+                android.content.SharedPreferences prefs = getContext().getSharedPreferences("gn_identity_prefs", Context.MODE_PRIVATE);
+                prefs.edit().putString("saved_device_id", deviceId).apply();
+            } catch (Exception ignored) {}
+        }
+        JSObject res = new JSObject();
+        res.put("success", true);
+        call.resolve(res);
+    }
+
+    @PluginMethod
+    public void getDeviceId(PluginCall call) {
+        JSObject res = new JSObject();
+        try {
+            android.content.SharedPreferences prefs = getContext().getSharedPreferences("gn_identity_prefs", Context.MODE_PRIVATE);
+            String deviceId = prefs.getString("saved_device_id", "");
+            res.put("deviceId", deviceId != null ? deviceId : "");
+        } catch (Exception ignored) {
+            res.put("deviceId", "");
         }
         call.resolve(res);
     }

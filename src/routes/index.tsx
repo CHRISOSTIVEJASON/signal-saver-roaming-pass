@@ -83,18 +83,14 @@ function Index() {
       let authorized = false;
       try {
         const res = await verifyCloudPasscode({ data: { passcode: passcode.trim() } });
-        if (res?.ok) {
-          authorized = true;
+        if (res && typeof res.ok === 'boolean') {
+          authorized = res.ok;
         } else if (passcode.trim() === getPasscode()) {
           authorized = true;
         }
       } catch (err) {
-        if (passcode.trim() === getPasscode()) authorized = true;
-      }
-
-      if (!authorized) {
-        const p = passcode.trim();
-        if (p === getPasscode() || p === "1234" || p === "2006") {
+        // Offline fallback to stored passcode
+        if (passcode.trim() === getPasscode()) {
           authorized = true;
         }
       }

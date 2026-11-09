@@ -9,7 +9,7 @@ import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanion
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
-import { getDeviceId, getPersistedPhone, savePersistedPhone } from "@/lib/store";
+import { getDeviceId, saveDeviceId, getPersistedPhone, savePersistedPhone } from "@/lib/store";
 import { X } from "lucide-react";
 import { relayProvidesConnection, getCompanionPin } from "@/lib/relay";
 import { Button } from "./ui/button";
@@ -196,12 +196,21 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     let cancelled = false;
     async function tryAutoCatchUp() {
       let candidate = getPersistedPhone();
-      if (!candidate && Capacitor.isNativePlatform()) {
+      if (Capacitor.isNativePlatform()) {
         try {
           const res = await GlobalRelay.getDevicePhone();
           if (res?.phone) {
             candidate = res.phone;
             savePersistedPhone(res.phone);
+          }
+        } catch {}
+        try {
+          const devRes = await GlobalRelay.getDeviceId();
+          if (devRes?.deviceId) {
+            saveDeviceId(devRes.deviceId);
+          } else {
+            const currentDevId = getDeviceId();
+            void GlobalRelay.saveDeviceId({ deviceId: currentDevId }).catch(() => {});
           }
         } catch {}
       }
@@ -220,6 +229,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   }, [restorePass, onActivated]);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restorePhone, setRestorePhone] = useState("");
+  const [restorePin, setRestorePin] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
   const [pairOpen, setPairOpen] = useState(false);
   const [pairPhone, setPairPhone] = useState("");
@@ -253,6 +263,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         savePersistedPhone(msisdn);
         if (Capacitor.isNativePlatform()) {
           void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
         }
         onActivated(sess);
         toast.success(`Active pass restored • ${formatClock(sess.remainingMs)} remaining`);
@@ -266,6 +277,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         savePersistedPhone(msisdn);
         if (Capacitor.isNativePlatform()) {
           void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
         }
         onActivated(sess);
         toast.success(`🎉 Phone number exempted! Joined with ${pass.label} (KES 0 charged).`);
@@ -309,6 +321,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         savePersistedPhone(msisdn);
         if (Capacitor.isNativePlatform()) {
           void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
         }
         updateTxn(r.id, { status: "Activated" });
         onActivated(activatedSession);
@@ -321,6 +334,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         savePersistedPhone(msisdn);
         if (Capacitor.isNativePlatform()) {
           void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
         }
         updateTxn(r.id, { status: "Activated" });
         onActivated(st.session);
@@ -343,15 +357,25 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     }
     setRestoreBusy(true);
     try {
-      const res = await restorePass({ data: { phone: msisdn, deviceId: getDeviceId() } });
+      const restorePayload: { phone: string; deviceId: string; pin?: string } = {
+        phone: msisdn,
+        deviceId: getDeviceId()
+      };
+      if (restorePin.trim()) {
+        restorePayload.pin = restorePin.trim();
+      }
+      const res = await restorePass({ data: restorePayload });
       if (res?.session) {
         savePersistedPhone(msisdn);
         if (Capacitor.isNativePlatform()) {
           void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
         }
         onActivated(res.session);
         toast.success(`Active pass found • ${formatClock(res.session.remainingMs)} remaining`);
         setRestoreOpen(false);
+        setRestorePin("");
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Unable to restore pass");
@@ -429,7 +453,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         )}
       </div>
       <div className="grid grid-cols-2 gap-3">
-        {PASSES.map((p) => (
+        {(offers && offers.length > 0 ? offers : PASSES).map((p) => (
           <Button variant="outline" disabled={Boolean(busy)} key={p.id} onClick={() => setPassId(p.id)}
             className={`relative flex h-24 flex-col items-start gap-1 whitespace-normal rounded-lg border p-3 text-left transition ${passId === p.id ? "border-primary bg-primary/10 shadow-[0_0_24px_-6px_var(--primary)]" : "border-border bg-secondary/40 hover:border-accent/50"}`}>
             {p.popular && <span className="absolute -top-2.5 right-2 rounded-full bg-accent px-2 py-0.5 text-[10px] font-bold uppercase text-accent-foreground">Best Value</span>}
@@ -479,18 +503,33 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
             </div>
             <p className="text-xs text-muted-foreground">Enter the phone number used for your pass (paid or VIP). We'll show your remaining time and companion pairing, and move the pass to this phone if you reinstalled the app.</p>
             <form onSubmit={handleRestore} className="space-y-3">
-              <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
-                <Smartphone className="h-4 w-4 text-muted-foreground" />
+              <div className="space-y-1">
+                <label className="text-[11px] font-medium text-muted-foreground uppercase font-mono tracking-wider">Phone Number</label>
+                <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
+                  <Smartphone className="h-4 w-4 text-muted-foreground" />
+                  <input
+                    autoFocus
+                    type="tel"
+                    placeholder="07XX XXX XXX"
+                    value={restorePhone}
+                    onChange={(e) => setRestorePhone(e.target.value)}
+                    className="h-10 w-full bg-transparent font-mono text-sm outline-none"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-medium text-muted-foreground uppercase font-mono tracking-wider">Companion PIN (Only if moving pass to another phone)</label>
                 <input
-                  autoFocus
-                  type="tel"
-                  placeholder="07XX XXX XXX"
-                  value={restorePhone}
-                  onChange={(e) => setRestorePhone(e.target.value)}
-                  className="h-10 w-full bg-transparent font-mono text-sm outline-none"
+                  type="text"
+                  maxLength={8}
+                  placeholder="e.g. 842109 (leave blank for same device)"
+                  value={restorePin}
+                  onChange={(e) => setRestorePin(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-1">
                 <Button type="button" onClick={() => setRestoreOpen(false)} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
                 <Button type="submit" disabled={restoreBusy} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
                   {restoreBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Check Pass"}
@@ -801,7 +840,10 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     const step = () => {
       const now = Date.now();
       const currentFrozen = Boolean(ref.current.frozen || session.frozen);
-      const running = state === "pool" && !connecting && !suspended && !currentFrozen;
+      const isCompanion = Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId());
+      const running = isCompanion
+        ? (Boolean(session.online) && !suspended && !currentFrozen)
+        : (state === "pool" && !connecting && !suspended && !currentFrozen);
       // Cap each step so time spent closed, suspended or offline is never charged.
       update((s) => ({
         remainingMs: tick(s.remainingMs, s.lastTick, Math.min(now, s.lastTick + 5_000), running),
@@ -828,15 +870,26 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
       {isFrozen && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-destructive/40 bg-destructive/15 px-3 py-1.5 text-xs font-medium text-destructive"><Snowflake className="h-3.5 w-3.5 shrink-0" />Pass Frozen by Admin — Internet access is paused and time is preserved</span>}
       {suspended && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5 shrink-0" />Service paused — your time is frozen{service.resumeDate ? ` until ${service.resumeDate}` : ""}</span>}
       {connecting && <span className="inline-flex items-center gap-2 text-sm text-warning"><Loader2 className="h-4 w-4 animate-spin" />Connecting — your time is preserved</span>}
-      {direct && <span className="inline-flex items-center justify-center gap-2 text-sm text-primary"><Signal className="h-5 w-5 shrink-0" />Connected to GLOBAL NETWORKS (High-Speed Direct Relay)</span>}
-      {state === "pool" && !direct && !connecting && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}
-      {state === "personal" && <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent"><Home className="h-3.5 w-3.5" />On your own Wi-Fi — your pass time is saved</span>}
-      {state === "searching" && deviceState.nearbyPoolDetected && (
+      {Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && session.online && (
+        <span className="inline-flex items-center justify-center gap-2 text-sm text-primary font-semibold">
+          <Signal className="h-5 w-5 shrink-0" />
+          Connected via Companion Pass • Host Relay Active
+        </span>
+      )}
+      {Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && !session.online && (
+        <span className="inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning">
+          <Snowflake className="h-3.5 w-3.5" />Time Frozen — waiting for host uplink
+        </span>
+      )}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && direct && <span className="inline-flex items-center justify-center gap-2 text-sm text-primary"><Signal className="h-5 w-5 shrink-0" />Connected to GLOBAL NETWORKS (High-Speed Direct Relay)</span>}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "pool" && !direct && !connecting && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "personal" && <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent"><Home className="h-3.5 w-3.5" />On your own Wi-Fi — your pass time is saved</span>}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "searching" && deviceState.nearbyPoolDetected && (
         <span className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary animate-pulse">
           <Zap className="h-3.5 w-3.5" />Sensed {deviceState.nearbySsid || "Pool Network"} • Connecting automatically
         </span>
       )}
-      {state === "searching" && !deviceState.nearbyPoolDetected && <span className="inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5" />Time Frozen — searching for network</span>}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "searching" && !deviceState.nearbyPoolDetected && <span className="inline-flex items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5" />Time Frozen — searching for network</span>}
       <div>
         <div className="text-xs uppercase tracking-widest text-muted-foreground">Time remaining</div>
         <div className={`font-mono text-5xl font-bold tabular-nums sm:text-6xl ${session.online ? "glow-text" : "text-warning"}`}>

@@ -665,11 +665,14 @@ function OffersCard() {
     let updated: PassOffer[];
     if (editingId) {
       updated = offers.map((o) =>
-        o.id === editingId ? { ...o, label: label.trim(), hours: h, amount: amt, popular } : o
+        o.id === editingId
+          ? { ...o, label: label.trim(), hours: h, amount: amt, popular }
+          : (popular ? { ...o, popular: false } : o)
       );
     } else {
       const newId = "p" + Math.round(h) + "_" + uid().slice(0, 4).toLowerCase();
-      updated = [...offers, { id: newId, label: label.trim(), hours: h, amount: amt, popular }];
+      const existing = popular ? offers.map((o) => ({ ...o, popular: false })) : offers;
+      updated = [...existing, { id: newId, label: label.trim(), hours: h, amount: amt, popular }];
     }
 
     setSaving(true);

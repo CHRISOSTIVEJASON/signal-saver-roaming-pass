@@ -28,6 +28,8 @@ export const GlobalRelay = registerPlugin<{
   playBeepTone(): Promise<{ success: boolean }>;
   saveDevicePhone(options: { phone: string }): Promise<{ success: boolean }>;
   getDevicePhone(): Promise<{ phone: string }>;
+  saveDeviceId(options: { deviceId: string }): Promise<{ success: boolean }>;
+  getDeviceId(): Promise<{ deviceId: string }>;
   submitCaptivePortal(options: { bssid?: string; ssid?: string; loginUrl?: string; portalUrl?: string; fields?: Record<string, string>; voucherCode?: string; phoneNumber?: string }): Promise<{ validated: boolean; success?: boolean; statusCode?: number; message?: string }>;
   installUpdate(options: { url: string }): Promise<{ success: boolean; message?: string }>;
   addListener(event: 'stateChanged', callback: (state: NativeState) => void): Promise<PluginListenerHandle>;

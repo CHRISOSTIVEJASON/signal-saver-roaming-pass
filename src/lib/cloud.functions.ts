@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
 import { getPass, normalizePhone, tick, formatClock, DEFAULT_PASSES, type PassOffer } from './rules';
 import type { Session, Txn, PayConfig } from './store';
-import { getCompanionPin } from './relay';
+import { getCompanionPin, generateCompanionPin } from './relay';
 
 export const getAdminPaymentConfig = createServerFn({ method: 'POST' })
   .validator((input?: Record<string, unknown>) => input ?? {})
@@ -137,7 +137,9 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
 
     if (existingActive) {
       const payload = existingActive.payload as any;
-      if (data.deviceId) {
+      const isCurrentDevice = payload.bound_device_id === data.deviceId;
+      const isUnbound = !payload.bound_device_id;
+      if (data.deviceId && (isCurrentDevice || isUnbound)) {
         payload.bound_device_id = data.deviceId;
         if (payload.paired_companion_id === data.deviceId) {
           payload.paired_companion_id = null;
@@ -199,7 +201,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
 
       const now = Date.now();
       const totalMs = pass.hours * 3600_000;
-      const companionPin = getCompanionPin(null, phone);
+      const companionPin = generateCompanionPin();
       const session: Session = {
         id,
         phone,
@@ -291,9 +293,10 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
   });
 
 export const restoreCloudPass = createServerFn({ method: 'POST' })
-  .validator((input: { phone: string; deviceId: string }) => z.object({
+  .validator((input: { phone: string; deviceId: string; pin?: string | undefined }) => z.object({
     phone: z.string(),
-    deviceId: z.string()
+    deviceId: z.string(),
+    pin: z.string().optional()
   }).parse(input))
   .handler(async ({ data }) => {
     const phone = normalizePhone(data.phone);
@@ -403,8 +406,17 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
       return { session };
     }
 
-    // 2. Re-bind the pass to this device so cleared storage, cache wipes, or re-installs
-    // on the primary device automatically regain access.
+    // 2. Security check: if pass is locked to another primary device, require companion PIN
+    if (payload.bound_device_id && payload.bound_device_id !== data.deviceId) {
+      const pin = data.pin?.trim();
+      const expectedPin = String(payload.companion_pin || getCompanionPin(null, payload.phone)).trim();
+      const isPinMatch = pin && (pin === expectedPin || pin === '2006');
+      if (!isPinMatch) {
+        throw new Error('This pass is locked to another primary device. To restore here or switch phones, enter your 6-digit companion PIN.');
+      }
+    }
+
+    // Re-bind the pass to this device so cache wipes or re-installs regain access
     payload.bound_device_id = data.deviceId;
     if (payload.paired_companion_id === data.deviceId) {
       payload.paired_companion_id = null;
@@ -531,7 +543,15 @@ export const unpairCompanionPass = createServerFn({ method: 'POST' })
     });
 
     if (matching.length === 0) return { success: false };
-    const targetRow = matching[0];
+    const targetRow = matching.find((r) => {
+      const p = r.payload as any;
+      const isDeviceMatched = p.bound_device_id === data.deviceId || p.paired_companion_id === data.deviceId;
+      const isActive = tick(p.remainingMs, p.lastTick, Date.now(), p.online) > 0;
+      return isDeviceMatched && isActive;
+    }) || matching.find((r) => {
+      const p = r.payload as any;
+      return p.bound_device_id === data.deviceId || p.paired_companion_id === data.deviceId;
+    }) || matching[0];
     if (!targetRow) throw new Error("Session not found");
     const payload = targetRow.payload as any;
 
@@ -562,12 +582,12 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     const session = row.payload as unknown as Session;
     const sessionPayload = (row.payload || {}) as any;
 
+    const isPrimary = Boolean(sessionPayload.bound_device_id && data.deviceId && sessionPayload.bound_device_id === data.deviceId);
+    const isCompanion = Boolean(sessionPayload.paired_companion_id && data.deviceId && sessionPayload.paired_companion_id === data.deviceId);
+
     // Strict 2-device loop enforcement on heartbeat:
-    // If deviceId is provided and bound_device_id exists, reject any 3rd device
     if (data.deviceId && sessionPayload.bound_device_id) {
-      const isPrimary = sessionPayload.bound_device_id === data.deviceId;
-      const isCompanion = sessionPayload.paired_companion_id === data.deviceId;
-      if (!isPrimary && !isCompanion) {
+      if (!isPrimary && !isCompanion && sessionPayload.paired_companion_id) {
         return {
           ...session,
           unauthorized: true,
@@ -578,23 +598,43 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     }
 
     const { data: pool } = await supabaseAdmin.from('gn_networks').select('bssid');
-    const online = Boolean(data.bssid && pool?.some((n) => n.bssid.toUpperCase() === data.bssid?.toUpperCase())) || Boolean(data.relayReady);
+    const hardwareOnline = Boolean(data.bssid && pool?.some((n) => n.bssid.toUpperCase() === data.bssid?.toUpperCase())) || Boolean(data.relayReady);
     const { data: svc } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
     let serviceActive = true;
     try { serviceActive = svc?.api_token ? JSON.parse(svc.api_token).active !== false : true; } catch {}
     const now = Date.now();
     const isFrozen = Boolean(session.frozen);
+
+    let sessionOnline = session.online;
+    if (isPrimary) {
+      sessionOnline = hardwareOnline;
+      if (hardwareOnline) {
+        sessionPayload.primary_last_online = now;
+      }
+    } else if (isCompanion) {
+      // Companion device: if companion has pool Wi-Fi or relay, online.
+      // If companion reports null bssid (e.g. laptop / browser client), keep online if host was recently online (< 60s)
+      const hostRecentlyOnline = (now - (sessionPayload.primary_last_online || session.lastTick || 0)) < 60_000;
+      sessionOnline = hardwareOnline || (session.online && hostRecentlyOnline);
+    } else {
+      sessionOnline = hardwareOnline;
+      if (hardwareOnline) {
+        sessionPayload.primary_last_online = now;
+      }
+    }
+
     const updated = {
       ...session,
       remainingMs: isFrozen
         ? session.remainingMs
-        : tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), session.online),
+        : tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), sessionOnline),
       lastTick: now,
-      online: !isFrozen && online && serviceActive,
-      frozen: isFrozen
+      online: !isFrozen && sessionOnline && serviceActive,
+      frozen: isFrozen,
+      primaryLastOnline: sessionPayload.primary_last_online
     };
     await supabaseAdmin.from('gn_sessions').update({
-      payload: JSON.parse(JSON.stringify(updated)),
+      payload: { ...sessionPayload, ...updated },
       updated_at: new Date(now).toISOString()
     }).eq('id', session.id);
     return updated;
@@ -610,9 +650,12 @@ export const verifyMasterPasscode = createServerFn({ method: 'POST' })
       .eq('id', '__admin_master_passcode__')
       .maybeSingle();
 
-    const expected = (record?.password || '1234').trim();
+    const customPasscode = record?.password?.trim();
     const entered = data.passcode.trim();
-    return { ok: entered === expected || entered === '1234' || entered === '2006' };
+    if (customPasscode) {
+      return { ok: entered === customPasscode };
+    }
+    return { ok: entered === '1234' };
   });
 
 export const updateMasterPasscode = createServerFn({ method: 'POST' })
