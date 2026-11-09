@@ -1035,7 +1035,7 @@ function PayHeroCard() {
   const confirmSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (passcode.trim() !== "2006") {
-      toast.error("Incorrect security code. Changing FinoQ details requires code 2006.");
+      toast.error("Incorrect security code. Authorization denied.");
       return;
     }
     setSaving(true);
@@ -1179,12 +1179,12 @@ function PayHeroCard() {
       {authOpen && (
         <form onSubmit={confirmSave} className="mt-4 space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
           <div className="text-xs font-semibold uppercase tracking-wider text-primary">Security Code Required</div>
-          <p className="text-xs text-muted-foreground">Enter security code <strong>2006</strong> to confirm changes to live FinoQ settings.</p>
+          <p className="text-xs text-muted-foreground">Enter master security code to confirm changes to live FinoQ settings.</p>
           <input
             type="password"
             autoFocus
             className={inputCls + " font-mono"}
-            placeholder="Enter code 2006"
+            placeholder="Enter security code"
             value={passcode}
             onChange={(e) => setPasscode(e.target.value)}
           />
