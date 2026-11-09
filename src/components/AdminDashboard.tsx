@@ -1,4 +1,4 @@
-import { getAdminPaymentConfig, savePaymentConfig, getCloudTransactionsAndSessions, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks, toggleServiceStatus, getServiceStatus, getExemptedNumbers, saveExemptedNumbers, getCloudOffers, saveCloudOffers, toggleFreezeSession, resetDeviceLock, getBlockedNumbers, saveBlockedNumbers } from "@/lib/cloud.functions";
+import { getAdminPaymentConfig, savePaymentConfig, getCloudTransactionsAndSessions, updateMasterPasscode, removeCloudNetwork, syncCloudNetworks, toggleServiceStatus, getServiceStatus, getExemptedNumbers, saveExemptedNumbers, getCloudOffers, saveCloudOffers, toggleFreezeSession, resetDeviceLock, getBlockedNumbers, saveBlockedNumbers, wipeUserSession, wipeAllUserSessions } from "@/lib/cloud.functions";
 import { Capacitor } from "@capacitor/core";
 import { GlobalRelay } from "@/lib/native-relay";
 import { useServerFn } from "@tanstack/react-start";
@@ -31,6 +31,42 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const fetchCloudRecords = useServerFn(getCloudTransactionsAndSessions);
   const toggleFreeze = useServerFn(toggleFreezeSession);
   const resetLock = useServerFn(resetDeviceLock);
+  const wipeSessionFn = useServerFn(wipeUserSession);
+  const wipeAllSessionsFn = useServerFn(wipeAllUserSessions);
+  const [wipeTarget, setWipeTarget] = useState<Session | null>(null);
+  const [wipeAllOpen, setWipeAllOpen] = useState(false);
+  const [wiping, setWiping] = useState(false);
+
+  async function handleConfirmWipe() {
+    if (!wipeTarget) return;
+    setWiping(true);
+    try {
+      await wipeSessionFn({ data: { sessionId: wipeTarget.id } });
+      setCloudSessions((prev) => prev.filter((s) => s.id !== wipeTarget.id));
+      setLocalSessions((prev) => prev.filter((s) => s.id !== wipeTarget.id));
+      toast.success(`User +${wipeTarget.phone} wiped out and device reset to factory.`);
+      setWipeTarget(null);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to wipe user session");
+    } finally {
+      setWiping(false);
+    }
+  }
+
+  async function handleConfirmWipeAll() {
+    setWiping(true);
+    try {
+      const res = await wipeAllSessionsFn();
+      setCloudSessions([]);
+      setLocalSessions([]);
+      toast.success(`Wiped all active users (${res?.count || 0} sessions). All devices reset to factory.`);
+      setWipeAllOpen(false);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to wipe all sessions");
+    } finally {
+      setWiping(false);
+    }
+  }
 
   async function handleResetLock(sessionId: string, lockType: "companion" | "all") {
     const label = lockType === "companion" ? "release the companion slot" : "reset all device locks (primary & companion)";
@@ -179,7 +215,23 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
 
       {tab === "pool" && <PoolManager />}
       {tab === "roam" && (<>
-        <Panel title="Live Clients & Roaming" icon={<Radio className="h-4 w-4" />}>
+        <Panel
+          title="Live Clients & Roaming"
+          icon={<Radio className="h-4 w-4" />}
+          action={
+            active.length > 0 ? (
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 px-2.5 text-xs font-semibold gap-1 bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm"
+                onClick={() => setWipeAllOpen(true)}
+              >
+                <Trash2 className="h-3 w-3" />
+                Wipe All Current Users
+              </Button>
+            ) : undefined
+          }
+        >
           <Table head={["Phone", "Pass", "Time left", "State", "Actions"]} empty="No active sessions yet."
             rows={active.map((s) => [
               `+${s.phone}`, getPass(s.passId).label, <span className="font-mono">{formatClock(s.remainingMs)}</span>,
@@ -199,6 +251,15 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
                 </Button>
                 <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10" onClick={() => handleQuickBlock(s.phone)}>
                   <Ban className="mr-1 h-3 w-3" /> Block
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-7 px-2 text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  title="Wipe out user and factory reset their phone"
+                  onClick={() => setWipeTarget(s)}
+                >
+                  <Trash2 className="mr-1 h-3 w-3" /> Wipe Out
                 </Button>
               </div>,
             ])} />
@@ -282,6 +343,100 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
               rows={displayTxns.map((t) => [new Date(t.at).toLocaleString(), `+${t.phone}`, `KES ${t.amount}`, <span className="font-mono text-xs">{t.ref}</span>, t.mode,
                 <Pill tone={t.status === "Activated" ? "primary" : t.status === "Failed" ? "destructive" : "warning"}>{t.status}</Pill>])} />
           </Panel>
+        </DialogContent>
+      </Dialog>
+
+      {/* Extra Confirmation Step: Wipe Single User Dialog */}
+      <Dialog open={Boolean(wipeTarget)} onOpenChange={(open) => !open && !wiping && setWipeTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Wipe Out User & Factory Reset?
+            </DialogTitle>
+            <DialogDescription className="text-left pt-2 text-xs">
+              Are you sure you want to completely wipe out this user? This will instantly terminate their active pass even if their countdown timer is still on.
+            </DialogDescription>
+          </DialogHeader>
+
+          {wipeTarget && (
+            <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Phone Number:</span>
+                <span className="font-mono font-bold text-foreground">+{wipeTarget.phone}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Time Remaining:</span>
+                <span className="font-mono font-semibold text-warning">{formatClock(wipeTarget.remainingMs)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Package:</span>
+                <span className="font-medium text-foreground">{getPass(wipeTarget.passId).label}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Bound Device ID:</span>
+                <span className="font-mono text-[11px] text-muted-foreground truncate max-w-[180px]">{wipeTarget.boundDeviceId || "Auto / Local"}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1 rounded bg-secondary/60 p-2.5 text-[11px] text-muted-foreground">
+            <p className="font-semibold text-foreground">Action Summary:</p>
+            <p>• Countdown is terminated and wiped to 00:00.</p>
+            <p>• Phone device ID, MAC bindings, and companion links are erased.</p>
+            <p>• Active pass record is deleted and cannot be auto-restored.</p>
+            <p>• Connected phone immediately returns to the factory purchase screen.</p>
+          </div>
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" disabled={wiping} onClick={() => setWipeTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={wiping}
+              onClick={handleConfirmWipe}
+            >
+              {wiping ? "Wiping..." : "Confirm Wipe Out (Factory Reset)"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Extra Confirmation Step: Emergency Wipe ALL Users Dialog */}
+      <Dialog open={wipeAllOpen} onOpenChange={(open) => !open && !wiping && setWipeAllOpen(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              Emergency Factory Reset: Wipe ALL Users?
+            </DialogTitle>
+            <DialogDescription className="text-left pt-2 text-xs">
+              This will immediately wipe out <strong>ALL {active.length} active users</strong> simultaneously, regardless of how much time remains on their passes.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-xs space-y-2">
+            <p className="text-destructive font-semibold">⚠️ High Impact Operation</p>
+            <p className="text-muted-foreground text-[11px] leading-relaxed">
+              Every connected customer phone will have its active countdown terminated, device bindings wiped, and be returned to the initial factory setup screen. All remaining paid hours will be erased.
+            </p>
+          </div>
+
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="outline" size="sm" disabled={wiping} onClick={() => setWipeAllOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={wiping}
+              onClick={handleConfirmWipeAll}
+            >
+              {wiping ? "Wiping All Users..." : "Yes, Wipe All Active Users"}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

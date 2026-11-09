@@ -254,10 +254,10 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       };
 
       if (isChannelMode) {
-        paymentBody.channel_id = channelNum;
+        paymentBody['channel_id'] = channelNum;
       } else {
         // FinoQ / PayHero Wallet collection: credit directly into account wallet
-        paymentBody.network_code = '63902';
+        paymentBody['network_code'] = '63902';
       }
 
       const response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
@@ -586,9 +586,14 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
     const { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.id).maybeSingle();
-    if (!row) throw new Error('Pass not found');
+    if (!row) {
+      return { id: data.id, wiped: true, remainingMs: 0, online: false, unauthorized: true };
+    }
     const session = row.payload as unknown as Session;
     const sessionPayload = (row.payload || {}) as any;
+    if (sessionPayload.wiped || (sessionPayload.remainingMs !== undefined && sessionPayload.remainingMs <= 0)) {
+      return { ...session, wiped: true, remainingMs: 0, online: false };
+    }
 
     const isPrimary = Boolean(sessionPayload.bound_device_id && data.deviceId && sessionPayload.bound_device_id === data.deviceId);
     const isCompanion = Boolean(sessionPayload.paired_companion_id && data.deviceId && sessionPayload.paired_companion_id === data.deviceId);
@@ -1022,4 +1027,71 @@ export const resetDeviceLock = createServerFn({ method: 'POST' })
     }).eq('id', data.sessionId);
     if (error) throw new Error('Failed to reset device lock: ' + error.message);
     return { ok: true, session: payload };
+  });
+
+
+export const wipeUserSession = createServerFn({ method: 'POST' })
+  .validator((input: { sessionId: string }) => z.object({
+    sessionId: z.string()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.sessionId).maybeSingle();
+    const payload = (row?.payload || {}) as any;
+    const phone = normalizePhone(payload?.phone || '');
+
+    // 1. Delete this specific session record
+    await supabaseAdmin.from('gn_sessions').delete().eq('id', data.sessionId);
+
+    // 2. Wipe any sibling session records for this phone number
+    if (phone) {
+      const { data: allSessions } = await supabaseAdmin.from('gn_sessions').select('*');
+      for (const s of allSessions || []) {
+        const p = s.payload as any;
+        if (p && (normalizePhone(p.phone || '') === phone || p.id === data.sessionId)) {
+          await supabaseAdmin.from('gn_sessions').delete().eq('id', s.id);
+        }
+      }
+
+      // 3. Mark any activated transactions for this phone as Wiped to prevent auto-restore
+      const { data: allTxns } = await supabaseAdmin.from('gn_transactions').select('*');
+      for (const t of allTxns || []) {
+        const p = t.payload as any;
+        if (p && (normalizePhone(p.phone || '') === phone || p.passId === payload?.passId) && p.status === 'Activated') {
+          p.status = 'Wiped';
+          await supabaseAdmin.from('gn_transactions').update({
+            payload: JSON.parse(JSON.stringify(p))
+          }).eq('id', t.id);
+        }
+      }
+    }
+
+    return { ok: true, sessionId: data.sessionId, phone };
+  });
+
+export const wipeAllUserSessions = createServerFn({ method: 'POST' })
+  .validator((input?: Record<string, unknown>) => input ?? {})
+  .handler(async () => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { data: allSessions } = await supabaseAdmin.from('gn_sessions').select('id');
+    const count = allSessions?.length || 0;
+
+    // Delete all session rows in gn_sessions
+    if (count > 0) {
+      await supabaseAdmin.from('gn_sessions').delete().neq('id', '___safe_keep___');
+    }
+
+    // Mark all activated transactions as Wiped
+    const { data: allTxns } = await supabaseAdmin.from('gn_transactions').select('*');
+    for (const t of allTxns || []) {
+      const p = t.payload as any;
+      if (p && p.status === 'Activated') {
+        p.status = 'Wiped';
+        await supabaseAdmin.from('gn_transactions').update({
+          payload: JSON.parse(JSON.stringify(p))
+        }).eq('id', t.id);
+      }
+    }
+
+    return { ok: true, count };
   });

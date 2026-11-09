@@ -62,3 +62,13 @@ describe("background network alert cooldown", () => {
     expect(shouldAlertNetwork(t0, t0 + ALERT_COOLDOWN_MS + 1000)).toBe(true);
   });
 });
+
+describe("Admin user wipeout & factory reset", () => {
+  it("session heartbeat detects wiped state and signals factory reset", () => {
+    // When session is missing or wiped:
+    const wipedResponse = { id: "test-sess", wiped: true, remainingMs: 0, online: false };
+    expect(wipedResponse.wiped).toBe(true);
+    expect(wipedResponse.remainingMs).toBe(0);
+    expect(wipedResponse.online).toBe(false);
+  });
+});

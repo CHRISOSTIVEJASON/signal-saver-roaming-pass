@@ -810,6 +810,24 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
           }
         });
         if (res && mounted) {
+          if ((res as any).wiped) {
+            setSessions(() => []);
+            localStorage.removeItem(KEYS.active);
+            localStorage.removeItem(KEYS.sessions);
+            localStorage.removeItem("gn_saved_phone");
+            localStorage.removeItem("gn_device_id");
+            document.cookie = "gn_saved_phone=; max-age=0; path=/;";
+            document.cookie = "gn_device_id=; max-age=0; path=/;";
+            if (Capacitor.isNativePlatform()) {
+              void GlobalRelay.stop().catch(() => {});
+              void GlobalRelay.saveDeviceId({ deviceId: "" }).catch(() => {});
+            }
+            toast.error("Your pass has been wiped by the administrator. Device reset to factory setup.");
+            window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.sessions }));
+            window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.active }));
+            onEnd();
+            return;
+          }
           const frozen = Boolean((res as any).frozen);
           const unauthorized = Boolean((res as any).unauthorized);
           update((s) => ({
