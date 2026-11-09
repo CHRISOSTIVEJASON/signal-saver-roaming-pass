@@ -13,7 +13,8 @@ export function publishCache(key: string, value: unknown) {
   listeners.forEach((listener) => listener());
 }
 export function clearPrivateCache() {
-  for (const key of ["gn_sessions", "gn_txns", "gn_mesh_links"]) publishCache(key, []);
+  // Never wipe local device sessions or transactions when unauthenticated!
+  publishCache("gn_mesh_links", []);
 }
 export function registerCloudSaver(save: typeof saver) { saver = save; }
 export async function saveShared(key: string, value: unknown) {

@@ -85,7 +85,7 @@ export function CloudSync() {
         live: (settings.data?.live !== undefined && settings.data?.live !== null) ? Boolean(settings.data.live) : Boolean(localCfg.live)
       });
 
-      if (!user) { clearPrivateCache(); return; }
+      if (!user) { return; }
       const [sessions, txns, mesh] = await Promise.all([
         supabase.from('gn_sessions').select('*').order('updated_at', { ascending: false }),
         supabase.from('gn_transactions').select('*').order('created_at', { ascending: false }),

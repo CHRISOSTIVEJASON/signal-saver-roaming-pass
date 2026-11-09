@@ -108,7 +108,16 @@ export function ClientPortal() {
   const session = sessions.find((s) => s.id === activeId && s.remainingMs > 0) ?? sessions.find((s) => s.remainingMs > 0);
 
   if (session && !buying) return <ActiveSession session={session} setSessions={setSessions} onEnd={() => setBuying(true)} />;
-  return <Purchase onActivated={(s) => { setSessions((p) => [{ ...s, lastTick: Date.now() }, ...p.filter((x) => x.id !== s.id)]); setActiveId(s.id); setBuying(false); }} />;
+  return (
+    <Purchase
+      existingSession={session}
+      onActivated={(s) => {
+        setSessions((p) => [{ ...s, lastTick: Date.now() }, ...p.filter((x) => x.id !== s.id)]);
+        setActiveId(s.id);
+        setBuying(false);
+      }}
+    />
+  );
 }
 
 
@@ -156,7 +165,7 @@ function NetworkBadge() {
   );
 }
 
-function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
+function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) => void; existingSession?: Session }) {
   const [cfg] = useConfig();
   const [offers] = useOffers();
   const [passId, setPassId] = useState<string>(offers[0]?.id || "p30");
@@ -195,6 +204,11 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
     const msisdn = normalizePhone(phone);
     if (!msisdn) { toast.error("Enter a valid Safaricom number (07… or 01…)"); return; }
 
+    if (existingSession && existingSession.remainingMs > 0) {
+      toast.error(`You already have an active pass with ${formatClock(existingSession.remainingMs)} remaining. Cannot join twice while active.`);
+      return;
+    }
+
     setBusy("Sending M-Pesa prompt to your phone…");
     const deviceId = getDeviceId();
     let currentTxnId = uid();
@@ -204,10 +218,15 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
       const ref = r.ref || ("GN" + uid());
 
       if ((r as any).exempted && (r as any).session) {
+        const sess = (r as any).session;
         setBusy("VIP number recognized! Activating access...");
         setTxns((p) => [{ id: r.id, phone: msisdn, amount: 0, passId, ref, at: Date.now(), status: "Activated", mode: "Exempted" as any }, ...p]);
-        onActivated((r as any).session);
-        toast.success(`🎉 Phone number exempted! Joined with ${pass.label} (KES 0 charged).`);
+        onActivated(sess);
+        if ((r as any).alreadyActive) {
+          toast.success(`Active VIP pass resumed • ${formatClock(sess.remainingMs)} remaining`);
+        } else {
+          toast.success(`🎉 Phone number exempted! Joined with ${pass.label} (KES 0 charged).`);
+        }
         return;
       }
 
@@ -317,6 +336,22 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
     <div className="space-y-4">
       <div className="flex flex-col items-center justify-center gap-2">
         <NetworkBadge />
+        {existingSession && existingSession.remainingMs > 0 && (
+          <div className="w-full flex items-center justify-between gap-2.5 rounded-xl border border-primary/40 bg-primary/10 p-3 text-xs text-primary shadow-sm">
+            <div className="space-y-0.5 text-left">
+              <span className="block font-semibold text-primary">Active Pass Running</span>
+              <span className="block font-mono text-muted-foreground">{formatClock(existingSession.remainingMs)} remaining (+{existingSession.phone})</span>
+            </div>
+            <Button
+              size="sm"
+              type="button"
+              onClick={() => onActivated(existingSession)}
+              className="h-8 text-xs font-semibold"
+            >
+              View Countdown
+            </Button>
+          </div>
+        )}
         {isNetworkAvailable && (
           <div className="w-full flex items-center gap-2.5 rounded-xl border border-primary/40 bg-primary/10 p-3 text-xs text-primary shadow-sm animate-pulse">
             <Zap className="h-4 w-4 shrink-0 text-primary" />

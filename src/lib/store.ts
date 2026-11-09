@@ -112,6 +112,7 @@ export function write<T>(key: string, v: T) {
       window.dispatchEvent(new CustomEvent("gn-store", { detail: key }));
     } catch {}
   }
+  publishCache(key, v);
   if (isSharedKey(key)) {
     void saveShared(key, v).catch(() => {});
   }
@@ -145,7 +146,14 @@ export function useStored<T>(key: string, fallback: T) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
   );
-  return [isSharedKey(key) ? cloudVal : val, set] as const;
+    if (isSharedKey(key)) {
+    // Local device is the authority for client sessions and transactions
+    if (key === KEYS.sessions || key === KEYS.txns) {
+      return [val, set] as const;
+    }
+    return [cloudVal, set] as const;
+  }
+  return [val, set] as const;
 }
 
 export const getPasscode = () => read(KEYS.passcode, DEFAULT_PASSCODE);
