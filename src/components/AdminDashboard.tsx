@@ -827,6 +827,11 @@ function OffersCard() {
 function PayHeroCard() {
   const [saved, setSaved] = useConfig();
   const [c, setC] = useState(saved);
+  const [settlementMode, setSettlementMode] = useState<"network" | "channel">(() => {
+    return (!saved.channelId || saved.channelId.trim() === "" || saved.channelId.trim() === "63902")
+      ? "network"
+      : "channel";
+  });
   const [authOpen, setAuthOpen] = useState(false);
   const [passcode, setPasscode] = useState("");
   const [saving, setSaving] = useState(false);
@@ -838,12 +843,14 @@ function PayHeroCard() {
     void fetchCloudConfig({ data: {} })
       .then((remote) => {
         if (!cancelled && remote) {
+          const isNetwork = !remote.channelId || remote.channelId.trim() === "" || remote.channelId.trim() === "63902";
+          setSettlementMode(isNetwork ? "network" : "channel");
           setC((prev) => ({
             ...prev,
             apiToken: prev.apiToken || remote.apiToken,
             username: prev.username || remote.username,
             password: prev.password || remote.password,
-            channelId: prev.channelId || remote.channelId,
+            channelId: isNetwork ? "63902" : (remote.channelId || prev.channelId),
             live: remote.live !== undefined ? Boolean(remote.live) : prev.live,
           }));
           setSaved((prev) => ({
@@ -851,7 +858,7 @@ function PayHeroCard() {
             apiToken: prev.apiToken || remote.apiToken,
             username: prev.username || remote.username,
             password: prev.password || remote.password,
-            channelId: prev.channelId || remote.channelId,
+            channelId: isNetwork ? "63902" : (remote.channelId || prev.channelId),
             live: remote.live !== undefined ? Boolean(remote.live) : prev.live,
           }));
         }
@@ -878,8 +885,12 @@ function PayHeroCard() {
     }
     setSaving(true);
     try {
-      setSaved(c);
-      await saveCloudConfig({ data: c });
+      const configToSave: PayConfig = {
+        ...c,
+        channelId: settlementMode === "network" ? "" : (c.channelId === "63902" ? "" : c.channelId.trim()),
+      };
+      setSaved(configToSave);
+      await saveCloudConfig({ data: configToSave });
       toast.success(c.live ? "Live FinoQ STK Push saved & activated!" : "Demo mode saved");
       setAuthOpen(false);
       setPasscode("");
@@ -914,14 +925,94 @@ function PayHeroCard() {
         </div>
 
         <div className="space-y-3">
-          <Field label="Channel ID (Optional — leave empty for FinoQ Wallet collection / credit only)"><input className={inputCls + " font-mono"} value={c.channelId} placeholder="Leave blank for FinoQ Wallet, or enter Channel ID" onChange={(e) => set("channelId")(e.target.value)} /></Field>
-          <Field label="API Token (Basic / API Key)"><input type="password" className={inputCls + " font-mono"} value={c.apiToken} placeholder="API Token or Basic Key" onChange={(e) => set("apiToken")(e.target.value)} /></Field>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Settlement Destination
+            </label>
+            <div className="grid grid-cols-2 gap-1 rounded-lg border border-border bg-background p-1 text-xs">
+              <Button
+                type="button"
+                variant={settlementMode === "network" ? "default" : "ghost"}
+                onClick={() => {
+                  setSettlementMode("network");
+                  set("channelId")("63902");
+                }}
+                className="rounded-md py-1.5 text-xs font-medium"
+              >
+                Network Code (Wallet)
+              </Button>
+              <Button
+                type="button"
+                variant={settlementMode === "channel" ? "default" : "ghost"}
+                onClick={() => {
+                  setSettlementMode("channel");
+                  if (c.channelId === "63902") {
+                    set("channelId")("");
+                  }
+                }}
+                className="rounded-md py-1.5 text-xs font-medium"
+              >
+                Channel ID (External)
+              </Button>
+            </div>
+          </div>
+
+          {settlementMode === "network" ? (
+            <Field label="Network Code (FinoQ Wallet Collection)">
+              <input
+                className={inputCls + " font-mono font-semibold text-primary"}
+                value={c.channelId || "63902"}
+                placeholder="63902"
+                onChange={(e) => set("channelId")(e.target.value)}
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Autofilled for Safaricom M-Pesa (<strong>63902</strong>). Funds settle directly into your FinoQ wallet.
+              </p>
+            </Field>
+          ) : (
+            <Field label="Channel ID (Till / Paybill / Bank)">
+              <input
+                className={inputCls + " font-mono"}
+                value={c.channelId === "63902" ? "" : c.channelId}
+                placeholder="e.g. 8949 (Enter your Channel ID)"
+                onChange={(e) => set("channelId")(e.target.value)}
+              />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Funds settle directly into your external registered Till, Paybill, or Bank.
+              </p>
+            </Field>
+          )}
+
+          <Field label="API Token (Basic / API Key)">
+            <input
+              type="password"
+              className={inputCls + " font-mono"}
+              value={c.apiToken}
+              placeholder="API Token or Basic Key"
+              onChange={(e) => set("apiToken")(e.target.value)}
+            />
+          </Field>
           <div className="relative flex items-center justify-center">
             <span className="bg-card px-2 text-xs text-muted-foreground">OR HTTP Basic Auth</span>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Field label="Username"><input className={inputCls} value={c.username} placeholder="Username" onChange={(e) => set("username")(e.target.value)} /></Field>
-            <Field label="Password"><input type="password" className={inputCls} value={c.password} placeholder="Password" onChange={(e) => set("password")(e.target.value)} /></Field>
+            <Field label="Username">
+              <input
+                className={inputCls}
+                value={c.username}
+                placeholder="Username"
+                onChange={(e) => set("username")(e.target.value)}
+              />
+            </Field>
+            <Field label="Password">
+              <input
+                type="password"
+                className={inputCls}
+                value={c.password}
+                placeholder="Password"
+                onChange={(e) => set("password")(e.target.value)}
+              />
+            </Field>
           </div>
         </div>
 

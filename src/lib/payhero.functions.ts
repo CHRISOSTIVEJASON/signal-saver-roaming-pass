@@ -34,7 +34,7 @@ export const initiateStkPush = createServerFn({ method: "POST" })
         body: JSON.stringify({
           amount: data.amount,
           phone_number: data.phone,
-          ...(data.channelId && Number(data.channelId) > 0
+          ...(data.channelId && Number(data.channelId) > 0 && String(data.channelId).trim() !== "63902"
             ? { channel_id: Number(data.channelId) }
             : { network_code: "63902" }),
           provider: "m-pesa",

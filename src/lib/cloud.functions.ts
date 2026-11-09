@@ -40,15 +40,16 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
 
     const { data: existingCreds } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
-    const hasCredUpdates = Boolean(data.apiToken || data.username || data.password || data.channelId);
+    const hasCredUpdates = Boolean(data.apiToken || data.username || data.password || data.channelId !== undefined);
 
     if (hasCredUpdates || !existingCreds) {
+      const channelToSave = (data.channelId === '63902' || !data.channelId) ? '' : String(data.channelId).trim();
       const { error } = await supabaseAdmin.from('gn_payment_credentials').upsert({
         id: 'global',
         api_token: data.apiToken !== undefined && data.apiToken !== '' ? data.apiToken : (existingCreds?.api_token || ''),
         username: data.username !== undefined && data.username !== '' ? data.username : (existingCreds?.username || ''),
         password: data.password !== undefined && data.password !== '' ? data.password : (existingCreds?.password || ''),
-        channel_id: data.channelId !== undefined && data.channelId !== '' ? data.channelId : (existingCreds?.channel_id || '')
+        channel_id: data.channelId !== undefined ? channelToSave : (existingCreds?.channel_id || '')
       });
       if (error) {
         console.error('Unable to save payment credentials:', error);
@@ -242,7 +243,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       const authorization = getPayHeroAuthHeader(credentials);
       const rawChannel = String(credentials?.channel_id || '').trim();
       const channelNum = Number(rawChannel);
-      const isChannelMode = Boolean(rawChannel) && !isNaN(channelNum) && channelNum > 0;
+      const isChannelMode = Boolean(rawChannel) && !isNaN(channelNum) && channelNum > 0 && rawChannel !== '63902';
 
       const paymentBody: Record<string, unknown> = {
         amount: pass.amount,
