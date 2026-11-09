@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_PASSCODE, APP_VERSION, DEFAULT_PASSES, type PassOffer } from "./rules";
+import { DEFAULT_PASSES as _DP, DEFAULT_PASSCODE, APP_VERSION, DEFAULT_PASSES, type PassOffer } from "./rules";
+export const DEFAULT_PASSES = _DP;
 import { cached, isSharedKey, saveShared, useCached } from "./cloud-cache";
 import type { MeshLink } from "./relay";
 import { toast } from "sonner";
@@ -256,5 +257,5 @@ export function useExemptedNumbers() {
 }
 
 export function useOffers() {
-  return useStored<PassOffer[]>(KEYS.offers, [...DEFAULT_PASSES]);
+  return useStored<PassOffer[]>(KEYS.offers, [..._DP]);
 }
