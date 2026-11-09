@@ -181,7 +181,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
           channel_id: channelNum,
           provider: 'm-pesa',
           external_reference: ref,
-          callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/payhero-callback'
+          callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback'
         })
       });
       const result = (await response.json().catch(() => ({}))) as any;
@@ -192,6 +192,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         const errorMsg = result?.error_message || result?.message || result?.error || `PayHero payment error (HTTP ${response.status})`;
         throw new Error(errorMsg);
       }
+      (txn as any).externalRef = ref;
       ref = String(returnedRef);
       txn.ref = ref;
     }
@@ -401,7 +402,7 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     let serviceActive = true;
     try { serviceActive = svc?.api_token ? JSON.parse(svc.api_token).active !== false : true; } catch {}
     const now = Date.now();
-    const updated = { ...session, online: online && serviceActive, remainingMs: tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), session.online), lastTick: now, online: online && serviceActive };
+    const updated = { ...session, remainingMs: tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), session.online), lastTick: now, online: online && serviceActive };
     await supabaseAdmin.from('gn_sessions').update({
       payload: JSON.parse(JSON.stringify(updated)),
       updated_at: new Date(now).toISOString()
