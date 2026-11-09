@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
-import { getPass, normalizePhone, tick, DEFAULT_PASSES, type PassOffer } from './rules';
+import { getPass, normalizePhone, tick, formatClock, DEFAULT_PASSES, type PassOffer } from './rules';
 import type { Session, Txn, PayConfig } from './store';
 import { getCompanionPin } from './relay';
 
@@ -256,7 +256,7 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
   }).parse(input))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { confirmTxn } = await import('./payments.server');
+    const { confirmTxn, activateTxn, loadOffers } = await import('./payments.server');
     const { data: row } = await supabaseAdmin.from('gn_transactions').select('*').eq('id', data.id).maybeSingle();
     if (!row) throw new Error('Payment not found');
     return confirmTxn(supabaseAdmin, row, data.deviceId);
@@ -271,7 +271,7 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
     const phone = normalizePhone(data.phone);
     if (!phone) throw new Error('Enter a valid M-Pesa phone number');
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { confirmTxn } = await import('./payments.server');
+    const { confirmTxn, activateTxn, loadOffers } = await import('./payments.server');
 
     // Activate any paid-but-unconfirmed payments first (e.g. app closed during STK push).
     const { data: txRows } = await supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(200);

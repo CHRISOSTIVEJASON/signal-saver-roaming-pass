@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { DEFAULT_PASSES as _DP, DEFAULT_PASSCODE, APP_VERSION, type PassOffer } from "./rules";
 export const DEFAULT_PASSES = _DP;
 export type { PassOffer } from "./rules";
-import { cached, isSharedKey, saveShared, useCached } from "./cloud-cache";
+import { cached, isSharedKey, publishCache, saveShared, useCached } from "./cloud-cache";
 import type { MeshLink } from "./relay";
 import { toast } from "sonner";
 
@@ -112,7 +112,7 @@ export function write<T>(key: string, v: T) {
       window.dispatchEvent(new CustomEvent("gn-store", { detail: key }));
     } catch {}
   }
-  publishCache(key, v);
+  try { publishCache(key, v); } catch {}
   if (isSharedKey(key)) {
     void saveShared(key, v).catch(() => {});
   }

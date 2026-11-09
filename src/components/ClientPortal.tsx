@@ -165,7 +165,7 @@ function NetworkBadge() {
   );
 }
 
-function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) => void; existingSession?: Session }) {
+function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) => void; existingSession?: Session | undefined }) {
   const [cfg] = useConfig();
   const [offers] = useOffers();
   const [passId, setPassId] = useState<string>(offers[0]?.id || "p30");

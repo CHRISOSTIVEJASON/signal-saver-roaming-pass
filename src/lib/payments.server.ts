@@ -6,7 +6,7 @@ import { getPayHeroAuthHeader } from './payhero-auth';
 type Admin = (typeof import('@/integrations/supabase/client.server'))['supabaseAdmin'];
 const j = (v: unknown) => JSON.parse(JSON.stringify(v));
 
-async function loadOffers(db: Admin): Promise<PassOffer[]> {
+export async function loadOffers(db: Admin): Promise<PassOffer[]> {
   try {
     const { data } = await db.from('gn_payment_credentials').select('api_token').eq('id', '__gn_offers__').maybeSingle();
     const parsed = data?.api_token ? JSON.parse(data.api_token) : null;
