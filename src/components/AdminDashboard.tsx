@@ -7,6 +7,7 @@ import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash
 import { toast } from "sonner";
 import { APP_VERSION, changePasscode, formatClock, getPass, tick, normalizePhone } from "@/lib/rules";
 import { Button } from "./ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import type { MeshLink } from "@/lib/relay";
 import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
 import { saveShared } from '@/lib/cloud-cache';
@@ -23,6 +24,8 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const [cloudSessions, setCloudSessions] = useState<Session[]>([]);
   const [activeOnly, setActiveOnly] = useState(true);
   const [networks] = useStored<Network[]>(KEYS.networks, []);
+  const [status] = useServiceStatus();
+  const [settingsDialog, setSettingsDialog] = useState<"service" | "passcode" | "app" | "payhero" | "offers" | "exempted" | "ledger" | null>(null);
   const [now, setNow] = useState(Date.now());
   const fetchCloudRecords = useServerFn(getCloudTransactionsAndSessions);
 
@@ -75,7 +78,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   };
   const displayTxns = activeOnly ? txns.filter(isTxnActive) : txns;
 
-  const [tab, setTab] = useState<"pool" | "roam" | "pay" | "set">("pool");
+  const [tab, setTab] = useState<"pool" | "roam" | "pay" | "set">("set");
   const tabs = [
     { id: "pool", label: "Wi-Fi Pool", icon: <Wifi className="h-4 w-4" /> },
     { id: "roam", label: "Live Roaming", icon: <Radio className="h-4 w-4" /> },
@@ -125,33 +128,91 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
         </Panel>
         <RelayMonitor />
       </>)}
-      {tab === "pay" && (<>
-        <PayHeroCard />
-        <OffersCard />
-        <ExemptedNumbersCard />
-        <Panel
-          title="M-Pesa Transactions"
-          icon={<Wallet className="h-4 w-4" />}
-          action={
-            <Button
-              type="button"
-              variant={activeOnly ? "default" : "outline"}
-              className="h-7 px-2.5 text-xs"
-              onClick={() => setActiveOnly((p) => !p)}
-            >
-              {activeOnly ? "Active Passes (Auto-Expires)" : "Show All History"}
+      {tab === "pay" && (
+        <div className="space-y-3">
+          <p className="px-1 text-xs text-muted-foreground">Choose an action to open its focused settings dialog.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <AdminAction icon={<Wallet className="h-5 w-5" />} label="PayHero / M-Pesa" detail="Gateway and payment mode" onClick={() => setSettingsDialog("payhero")} />
+            <AdminAction icon={<Tag className="h-5 w-5" />} label="Pass Packages" detail="Pricing and durations" onClick={() => setSettingsDialog("offers")} />
+            <AdminAction icon={<PhoneCall className="h-5 w-5" />} label="VIP Exemptions" detail="Free-access phone list" onClick={() => setSettingsDialog("exempted")} />
+            <AdminAction icon={<Database className="h-5 w-5" />} label="Transaction Ledger" detail={`${displayTxns.length} records`} onClick={() => setSettingsDialog("ledger")} />
+          </div>
+        </div>
+      )}
+      {tab === "set" && (
+        <div className="space-y-3">
+          <p className="px-1 text-xs text-muted-foreground">Tap an action to open its focused settings dialog.</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <AdminAction icon={status.active ? <Power className="h-5 w-5" /> : <PowerOff className="h-5 w-5" />} label="Master Service Switch" detail={status.active ? "Currently online" : "Currently closed"} onClick={() => setSettingsDialog("service")} tone={!status.active ? "danger" : "default"} />
+            <AdminAction icon={<KeyRound className="h-5 w-5" />} label="Change Passcode" detail="Admin access security" onClick={() => setSettingsDialog("passcode")} />
+            <AdminAction icon={<Smartphone className="h-5 w-5" />} label="App Updates / APK" detail={`Installed v${runningVer}`} onClick={() => setSettingsDialog("app")} />
+          </div>
+        </div>
+      )}
+
+      <Dialog open={settingsDialog === "service"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader><DialogTitle>Master Service Switch</DialogTitle><DialogDescription>Pause or resume service for all users.</DialogDescription></DialogHeader>
+          <ServiceSwitchCard />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsDialog === "passcode"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-md">
+          <DialogHeader><DialogTitle>Admin Master Passcode</DialogTitle><DialogDescription>Change the passcode used to access admin controls.</DialogDescription></DialogHeader>
+          <PasscodeCard />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsDialog === "app"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader><DialogTitle>App Version & Updates</DialogTitle><DialogDescription>Set the APK download link and mandatory update policy.</DialogDescription></DialogHeader>
+          <AppSettingsCard />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsDialog === "payhero"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader><DialogTitle>PayHero / M-Pesa</DialogTitle><DialogDescription>Configure payment mode and gateway credentials.</DialogDescription></DialogHeader>
+          <PayHeroCard />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsDialog === "offers"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader><DialogTitle>Pass Packages & Pricing</DialogTitle><DialogDescription>Manage customer pass offers.</DialogDescription></DialogHeader>
+          <OffersCard />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsDialog === "exempted"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader><DialogTitle>VIP Exemptions</DialogTitle><DialogDescription>Manage phone numbers that receive free access.</DialogDescription></DialogHeader>
+          <ExemptedNumbersCard />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsDialog === "ledger"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-5xl">
+          <DialogHeader><DialogTitle>M-Pesa Transactions</DialogTitle><DialogDescription>Payment activity and pass status.</DialogDescription></DialogHeader>
+          <Panel title="Transaction History" icon={<Wallet className="h-4 w-4" />} action={
+            <Button type="button" variant={activeOnly ? "default" : "outline"} className="h-7 px-2.5 text-xs" onClick={() => setActiveOnly((p) => !p)}>
+              {activeOnly ? "Active Passes" : "All History"}
             </Button>
-          }
-        >
-          <Table head={["Time", "Phone", "Amount", "Reference", "Mode", "Status"]} empty={activeOnly ? "No active pass payments currently." : "No transactions yet."}
-            rows={displayTxns.map((t) => [
-              new Date(t.at).toLocaleString(), `+${t.phone}`, `KES ${t.amount}`, <span className="font-mono text-xs">{t.ref}</span>, t.mode,
-              <Pill tone={t.status === "Activated" ? "primary" : t.status === "Failed" ? "destructive" : "warning"}>{t.status}</Pill>,
-            ])} />
-        </Panel>
-      </>)}
-      {tab === "set" && (<div className="space-y-4"><ServiceSwitchCard /><PasscodeCard /><AppSettingsCard /></div>)}
+          }>
+            <Table head={["Time", "Phone", "Amount", "Reference", "Mode", "Status"]} empty={activeOnly ? "No active pass payments currently." : "No transactions yet."}
+              rows={displayTxns.map((t) => [new Date(t.at).toLocaleString(), `+${t.phone}`, `KES ${t.amount}`, <span className="font-mono text-xs">{t.ref}</span>, t.mode,
+                <Pill tone={t.status === "Activated" ? "primary" : t.status === "Failed" ? "destructive" : "warning"}>{t.status}</Pill>])} />
+          </Panel>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+}
+
+function AdminAction({ icon, label, detail, onClick, tone = "default" }: { icon: ReactNode; label: string; detail: string; onClick: () => void; tone?: "default" | "danger" }) {
+  return (
+    <button type="button" onClick={onClick} className={`flex min-h-28 flex-col items-start justify-between rounded-xl border p-3 text-left transition-colors hover:border-primary/50 hover:bg-secondary/40 ${tone === "danger" ? "border-destructive/40 bg-destructive/5" : "border-border bg-card/70"}`}>
+      <span className={`rounded-lg p-2 ${tone === "danger" ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary"}`}>{icon}</span>
+      <span className="mt-2 block">
+        <span className="block text-xs font-semibold text-foreground">{label}</span>
+        <span className="mt-0.5 block text-[10px] text-muted-foreground">{detail}</span>
+      </span>
+    </button>
   );
 }
 

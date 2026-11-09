@@ -308,6 +308,44 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
         return { session };
       }
 
+      // Checking a pass should also start access for an exempted number. The old
+      // restore path only searched existing sessions and paid transactions, so
+      // VIPs who used Check Pass could incorrectly get "No active pass found".
+      const { data: exemptRecord } = await supabaseAdmin
+        .from('gn_payment_credentials')
+        .select('api_token')
+        .eq('id', '__gn_exempted_numbers__')
+        .maybeSingle();
+      let isExempt = false;
+      try {
+        const exempted = exemptRecord?.api_token ? JSON.parse(exemptRecord.api_token) : [];
+        isExempt = Array.isArray(exempted) && exempted.some((entry: any) => normalizePhone(entry?.phone || '') === phone);
+      } catch {}
+
+      if (isExempt) {
+        const customOffers = await loadOffers(supabaseAdmin);
+        const pass = getPass(customOffers[0]?.id || 'p15', customOffers);
+        const id = crypto.randomUUID();
+        const txn: Txn = {
+          id,
+          ref: 'EXEMPT-' + id.replaceAll('-', '').slice(0, 8).toUpperCase(),
+          phone,
+          amount: 0,
+          passId: pass.id,
+          at: Date.now(),
+          status: 'Activated',
+          mode: 'Demo',
+        };
+        const { error: insertError } = await supabaseAdmin.from('gn_transactions').insert({
+          id,
+          user_id: data.deviceId || id,
+          payload: JSON.parse(JSON.stringify({ ...txn, mode: 'Exempted' })),
+        });
+        if (insertError) throw new Error('Unable to create the VIP pass. Please try again.');
+        const session = await activateTxn(supabaseAdmin, txn, data.deviceId || id, data.deviceId);
+        return { session, exempted: true };
+      }
+
       throw new Error('No active pass found for this phone number');
     }
 
@@ -362,7 +400,7 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
 
     const matching = rows.filter((r) => {
       const p = r.payload as any;
-      if (!p || p.phone !== phone) return false;
+      if (!p || normalizePhone(p.phone || '') !== phone) return false;
       return p.remainingMs > 0;
     });
 

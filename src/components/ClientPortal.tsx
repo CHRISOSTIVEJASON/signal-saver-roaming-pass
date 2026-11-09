@@ -511,7 +511,7 @@ function CompanionSharing({ session, onUpdateSession }: { session: Session; onUp
   const isNative = Capacitor.isNativePlatform();
 
   const networkName = deviceState.relay?.networkName || ("GN-SHARE-" + (session.phone.replace(/\D/g, "").slice(-4) || "PASS"));
-  const pin = session.companionPin || getCompanionPin(deviceState.relay?.passphrase, session.phone);
+  const pin = session.companionPin || getCompanionPin(null, session.phone);
   const peerCount = deviceState.relay?.peerCount ?? 0;
   
   const normPhone = normalizePhone(session.phone);
