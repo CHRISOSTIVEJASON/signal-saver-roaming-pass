@@ -137,6 +137,17 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
 
     if (existingActive) {
       const payload = existingActive.payload as any;
+      if (data.deviceId) {
+        payload.bound_device_id = data.deviceId;
+        if (payload.paired_companion_id === data.deviceId) {
+          payload.paired_companion_id = null;
+        }
+        await supabaseAdmin.from('gn_sessions').update({
+          payload: JSON.parse(JSON.stringify(payload)),
+          updated_at: new Date().toISOString()
+        }).eq('id', existingActive.id);
+      }
+
       const existingSession: Session = {
         id: payload.id,
         phone: payload.phone,
@@ -148,21 +159,20 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         startedAt: payload.startedAt,
         companionPin: payload.companion_pin || getCompanionPin(null, payload.phone),
         pairedCompanionId: payload.paired_companion_id || null,
+        boundDeviceId: payload.bound_device_id || null,
+        frozen: Boolean(payload.frozen),
+        frozenAt: payload.frozenAt,
       };
 
-      if (isExempt) {
-        return {
-          id: payload.id,
-          live: false,
-          ref: 'EXEMPT-ACTIVE',
-          exempted: true,
-          session: existingSession,
-          amount: 0,
-          alreadyActive: true,
-        };
-      }
-
-      throw new Error(`This phone number already has an active pass with ${formatClock(existingSession.remainingMs)} remaining. You cannot join twice while your pass is active.`);
+      return {
+        id: payload.id,
+        live: false,
+        ref: isExempt ? 'EXEMPT-ACTIVE' : (payload.ref || 'RESTORE-ACTIVE'),
+        exempted: isExempt,
+        session: existingSession,
+        amount: 0,
+        alreadyActive: true,
+      };
     }
 
     const id = crypto.randomUUID();
@@ -393,19 +403,16 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
       return { session };
     }
 
-    // 2. If this pass is locked to another primary device, reject unauthorized restore!
-    if (payload.bound_device_id && payload.bound_device_id !== data.deviceId) {
-      throw new Error('This pass is strictly locked to another primary device. To use this pass here, pair it as your 1 allowed companion using the 6-digit PIN on the host device.');
+    // 2. Re-bind the pass to this device so cleared storage, cache wipes, or re-installs
+    // on the primary device automatically regain access.
+    payload.bound_device_id = data.deviceId;
+    if (payload.paired_companion_id === data.deviceId) {
+      payload.paired_companion_id = null;
     }
-
-    // 3. If bound_device_id is not set yet, bind this device as primary
-    if (!payload.bound_device_id) {
-      payload.bound_device_id = data.deviceId;
-      await supabaseAdmin.from('gn_sessions').update({
-        payload: JSON.parse(JSON.stringify(payload)),
-        updated_at: new Date().toISOString()
-      }).eq('id', targetRow.id);
-    }
+    await supabaseAdmin.from('gn_sessions').update({
+      payload: JSON.parse(JSON.stringify(payload)),
+      updated_at: new Date().toISOString()
+    }).eq('id', targetRow.id);
 
     const session: Session = {
       id: payload.id,
@@ -433,6 +440,7 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
     deviceId: z.string()
   }).parse(input))
   .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
     const phone = normalizePhone(data.phone);
     if (!phone) throw new Error('Enter a valid M-Pesa phone number');
     const inputPin = data.pin.trim();
@@ -447,9 +455,6 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
     if (isBlocked) {
       throw new Error('This phone number has been blocked from accessing services by admin.');
     }
-
-
-    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
 
     const { data: rows, error } = await supabaseAdmin.from('gn_sessions').select('*').order('updated_at', { ascending: false });
     if (error || !rows || rows.length === 0) throw new Error('No active pass found for this phone number');

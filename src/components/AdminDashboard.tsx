@@ -3,7 +3,7 @@ import { Capacitor } from "@capacitor/core";
 import { GlobalRelay } from "@/lib/native-relay";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState, type ReactNode } from "react";
-import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X, Power, PowerOff, PhoneCall, Tag, Edit2, Ban, Play, Snowflake, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LogOut, Plus, Radio, Settings, Smartphone, Trash2, Users, Wallet, Wifi, Database, X, Power, PowerOff, PhoneCall, Tag, Edit2, Ban, Play, Snowflake, ShieldCheck, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { APP_VERSION, changePasscode, formatClock, getPass, tick, normalizePhone } from "@/lib/rules";
 import { Button } from "./ui/button";
@@ -12,7 +12,7 @@ import type { MeshLink } from "@/lib/relay";
 import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
 import { saveShared } from '@/lib/cloud-cache';
 import { useConfig, useDevice } from "@/components/Gates";
-import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode, useAppVersion, useServiceStatus, useExemptedNumbers, useOffers, type PassOffer } from "@/lib/store";
+import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode, useAppVersion, useServiceStatus, useExemptedNumbers, useOffers, type PassOffer, useBlockedNumbers, type BlockedNumber } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
@@ -75,7 +75,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
     if (!norm) return;
     if (confirm(`Block +${norm} from accessing services and buying passes? This will also freeze active passes.`)) {
       try {
-        const updated = [...blocked.filter((b) => normalizePhone(b.phone) !== norm), { phone: norm, reason: "Blocked from live roaming", addedAt: Date.now() }];
+        const updated = [...blocked.filter((b: BlockedNumber) => normalizePhone(b.phone) !== norm), { phone: norm, reason: "Blocked from live roaming", addedAt: Date.now() }];
         await saveBlockedList({ data: { numbers: updated } });
         setBlocked(updated);
         write(KEYS.blockedNumbers, updated);
@@ -1339,7 +1339,7 @@ function BlockedNumbersCard() {
       toast.error("Please enter a valid phone number (e.g. 0712345678)");
       return;
     }
-    if (blocked.some((b) => normalizePhone(b.phone) === normalized)) {
+    if (blocked.some((b: BlockedNumber) => normalizePhone(b.phone) === normalized)) {
       toast.error("This phone number is already blocked");
       return;
     }
@@ -1363,7 +1363,7 @@ function BlockedNumbersCard() {
   }
 
   async function handleRemove(phone: string) {
-    const updated = blocked.filter((b) => b.phone !== phone);
+    const updated = blocked.filter((b: BlockedNumber) => b.phone !== phone);
     try {
       await saveBlockedList({ data: { numbers: updated } });
       setBlocked(updated);
@@ -1410,7 +1410,7 @@ function BlockedNumbersCard() {
         <Table
           head={["Phone Number", "Reason", "Blocked Date", "Action"]}
           empty="No numbers currently blocked. All users can access services."
-          rows={blocked.map((item) => [
+          rows={blocked.map((item: BlockedNumber) => [
             <span className="font-mono font-semibold text-destructive">+{item.phone}</span>,
             item.reason || "—",
             new Date(item.addedAt).toLocaleDateString(),

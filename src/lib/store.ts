@@ -283,3 +283,29 @@ export function useOffers() {
 export function useBlockedNumbers() {
   return useStored<BlockedNumber[]>(KEYS.blockedNumbers, []);
 }
+
+
+
+export function getPersistedPhone(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const fromLocal = localStorage.getItem("gn_saved_phone");
+    if (fromLocal && fromLocal.trim()) return fromLocal.trim();
+  } catch {}
+  try {
+    const match = document.cookie.match(/(?:^|;\s*)gn_saved_phone=([^;]+)/);
+    if (match && match[1]) return decodeURIComponent(match[1]);
+  } catch {}
+  return "";
+}
+
+export function savePersistedPhone(phone: string) {
+  if (typeof window === "undefined" || !phone) return;
+  const clean = phone.trim();
+  try {
+    localStorage.setItem("gn_saved_phone", clean);
+  } catch {}
+  try {
+    document.cookie = "gn_saved_phone=" + encodeURIComponent(clean) + "; max-age=31536000; path=/; SameSite=Lax";
+  } catch {}
+}

@@ -661,4 +661,31 @@ public class GlobalRelayPlugin extends Plugin {
             call.reject("Failed to play tone: " + t.getMessage());
         }
     }
+
+    @PluginMethod
+    public void saveDevicePhone(PluginCall call) {
+        String phone = call.getString("phone");
+        if (phone != null && !phone.isEmpty()) {
+            try {
+                android.content.SharedPreferences prefs = getContext().getSharedPreferences("gn_identity_prefs", Context.MODE_PRIVATE);
+                prefs.edit().putString("saved_phone", phone).apply();
+            } catch (Exception ignored) {}
+        }
+        JSObject res = new JSObject();
+        res.put("success", true);
+        call.resolve(res);
+    }
+
+    @PluginMethod
+    public void getDevicePhone(PluginCall call) {
+        JSObject res = new JSObject();
+        try {
+            android.content.SharedPreferences prefs = getContext().getSharedPreferences("gn_identity_prefs", Context.MODE_PRIVATE);
+            String phone = prefs.getString("saved_phone", "");
+            res.put("phone", phone != null ? phone : "");
+        } catch (Exception ignored) {
+            res.put("phone", "");
+        }
+        call.resolve(res);
+    }
 }

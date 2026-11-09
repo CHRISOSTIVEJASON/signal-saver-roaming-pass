@@ -9,7 +9,7 @@ import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanion
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
-import { getDeviceId } from "@/lib/store";
+import { getDeviceId, getPersistedPhone, savePersistedPhone } from "@/lib/store";
 import { X } from "lucide-react";
 import { relayProvidesConnection, getCompanionPin } from "@/lib/relay";
 import { Button } from "./ui/button";
@@ -169,7 +169,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const [cfg] = useConfig();
   const [offers] = useOffers();
   const [passId, setPassId] = useState<string>(offers[0]?.id || "p30");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(() => getPersistedPhone() || "");
   const [busy, setBusy] = useState<string | null>(null);
   const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
   const pass = getPass(passId, offers);
@@ -189,6 +189,35 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const confirmPayment = useServerFn(confirmCloudPayment);
   const restorePass = useServerFn(restoreCloudPass);
   const pairCompanion = useServerFn(pairCompanionPass);
+
+  // Automated background catch-up: if this device/browser had an active pass before cache wipe,
+  // recover it automatically without forcing the customer to pay again.
+  useEffect(() => {
+    let cancelled = false;
+    async function tryAutoCatchUp() {
+      let candidate = getPersistedPhone();
+      if (!candidate && Capacitor.isNativePlatform()) {
+        try {
+          const res = await GlobalRelay.getDevicePhone();
+          if (res?.phone) {
+            candidate = res.phone;
+            savePersistedPhone(res.phone);
+          }
+        } catch {}
+      }
+      if (!candidate || candidate.length < 9) return;
+      try {
+        const devId = getDeviceId();
+        const res = await restorePass({ data: { phone: candidate, deviceId: devId } });
+        if (!cancelled && res?.session && res.session.remainingMs > 0) {
+          onActivated(res.session);
+          toast.success(`Active roaming pass restored automatically • ${formatClock(res.session.remainingMs)} remaining`);
+        }
+      } catch {}
+    }
+    void tryAutoCatchUp();
+    return () => { cancelled = true; };
+  }, [restorePass, onActivated]);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restorePhone, setRestorePhone] = useState("");
   const [restoreBusy, setRestoreBusy] = useState(false);
@@ -217,16 +246,29 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
       currentTxnId = r.id;
       const ref = r.ref || ("GN" + uid());
 
+      if ((r as any).alreadyActive && (r as any).session) {
+        const sess = (r as any).session;
+        setBusy("Active pass found! Restoring your connection...");
+        setTxns((p) => [{ id: r.id, phone: msisdn, amount: 0, passId: sess.passId || passId, ref, at: Date.now(), status: "Activated", mode: (r as any).exempted ? ("Exempted" as any) : ("Active Pass" as any) }, ...p]);
+        savePersistedPhone(msisdn);
+        if (Capacitor.isNativePlatform()) {
+          void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+        }
+        onActivated(sess);
+        toast.success(`Active pass restored • ${formatClock(sess.remainingMs)} remaining`);
+        return;
+      }
+
       if ((r as any).exempted && (r as any).session) {
         const sess = (r as any).session;
         setBusy("VIP number recognized! Activating access...");
         setTxns((p) => [{ id: r.id, phone: msisdn, amount: 0, passId, ref, at: Date.now(), status: "Activated", mode: "Exempted" as any }, ...p]);
-        onActivated(sess);
-        if ((r as any).alreadyActive) {
-          toast.success(`Active VIP pass resumed • ${formatClock(sess.remainingMs)} remaining`);
-        } else {
-          toast.success(`🎉 Phone number exempted! Joined with ${pass.label} (KES 0 charged).`);
+        savePersistedPhone(msisdn);
+        if (Capacitor.isNativePlatform()) {
+          void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
         }
+        onActivated(sess);
+        toast.success(`🎉 Phone number exempted! Joined with ${pass.label} (KES 0 charged).`);
         return;
       }
 
@@ -264,6 +306,10 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           throw new Error("Payment verification taking longer than expected. If you entered your PIN, tap 'Check Pass / Active Status' below.");
         }
         setBusy("M-Pesa confirmed! Activating high-speed pass…");
+        savePersistedPhone(msisdn);
+        if (Capacitor.isNativePlatform()) {
+          void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+        }
         updateTxn(r.id, { status: "Activated" });
         onActivated(activatedSession);
         toast.success("Payment confirmed! High-speed pass activated.");
@@ -272,6 +318,10 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         await new Promise((res) => setTimeout(res, 800));
         const st = await confirmPayment({ data: { id: r.id, deviceId } });
         if (!st.session) throw new Error("Demo pass could not be activated");
+        savePersistedPhone(msisdn);
+        if (Capacitor.isNativePlatform()) {
+          void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+        }
         updateTxn(r.id, { status: "Activated" });
         onActivated(st.session);
         toast.success("Demo pass activated — no money charged (Test mode)");
@@ -295,6 +345,10 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     try {
       const res = await restorePass({ data: { phone: msisdn, deviceId: getDeviceId() } });
       if (res?.session) {
+        savePersistedPhone(msisdn);
+        if (Capacitor.isNativePlatform()) {
+          void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+        }
         onActivated(res.session);
         toast.success(`Active pass found • ${formatClock(res.session.remainingMs)} remaining`);
         setRestoreOpen(false);
