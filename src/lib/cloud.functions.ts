@@ -32,27 +32,7 @@ export const getAdminPaymentConfig = createServerFn({ method: 'POST' })
   });
 
 
-function getPayHeroAuthHeader(credentials: { api_token?: string; username?: string; password?: string }) {
-  const token = (credentials.api_token || '').trim();
-  if (token) {
-    if (token.toLowerCase().startsWith('basic ')) return token;
-    if (token.toLowerCase().startsWith('bearer ')) return token;
-    // If it already looks like base64-encoded credentials (min 16 chars, no spaces, valid base64 chars)
-    if (/^[A-Za-z0-9+/=]{16,}$/.test(token) && !token.includes(':')) {
-      try {
-        const decoded = atob(token);
-        if (decoded.includes(':') || decoded.length > 5) {
-          return `Basic ${token}`;
-        }
-      } catch {}
-    }
-    if (token.includes(':')) return `Basic ${btoa(token)}`;
-    return `Basic ${btoa(`${token}:`)}`;
-  }
-  const u = (credentials.username || '').trim();
-  const p = (credentials.password || '').trim();
-  return `Basic ${btoa(`${u}:${p}`)}`;
-}
+import { getPayHeroAuthHeader } from './payhero-auth';
 export const savePaymentConfig = createServerFn({ method: 'POST' })
   .validator((data: PayConfig) => data)
   .handler(async ({ data }) => {
@@ -201,7 +181,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
           channel_id: channelNum,
           provider: 'm-pesa',
           external_reference: ref,
-          callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/payhero-callback'
+          callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback'
         })
       });
       const result = (await response.json().catch(() => ({}))) as any;
@@ -212,6 +192,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         const errorMsg = result?.error_message || result?.message || result?.error || `PayHero payment error (HTTP ${response.status})`;
         throw new Error(errorMsg);
       }
+      (txn as any).externalRef = ref;
       ref = String(returnedRef);
       txn.ref = ref;
     }
@@ -232,107 +213,10 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
   }).parse(input))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { confirmTxn } = await import('./payments.server');
     const { data: row } = await supabaseAdmin.from('gn_transactions').select('*').eq('id', data.id).maybeSingle();
     if (!row) throw new Error('Payment not found');
-    const txn = row.payload as unknown as Txn;
-    if (txn.status === 'Failed') throw new Error('Payment was cancelled or failed');
-
-    if (txn.mode === 'Live' && txn.status !== 'Activated') {
-      const { data: c } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
-      if (!c) throw new Error('Payment configuration unavailable');
-      const authorization = getPayHeroAuthHeader(c);
-      let response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(txn.ref)}`, {
-        headers: { Authorization: authorization, Accept: 'application/json' }
-      });
-      // If 404, fallback to query by external_reference
-      if (!response.ok && response.status === 404) {
-        response = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?external_reference=${encodeURIComponent(txn.ref)}`, {
-          headers: { Authorization: authorization, Accept: 'application/json' }
-        });
-      }
-      if (!response.ok) {
-        // Temporary server / network glitch: keep pending so polling continues smoothly
-        return { pending: true, session: null };
-      }
-      const raw = (await response.json().catch(() => ({}))) as any;
-
-      const dataObj = (raw && typeof raw === 'object' && raw.data) ? raw.data : raw;
-      const responseObj = (raw && typeof raw === 'object' && raw.response) ? raw.response : {};
-
-      const statusStr = String(dataObj?.status ?? raw?.status ?? raw?.Status ?? dataObj?.status_text ?? '').trim().toUpperCase();
-      const resultCode = responseObj?.ResultCode ?? dataObj?.ResultCode ?? raw?.ResultCode ?? dataObj?.result_code ?? raw?.result_code;
-      const paymentSuccess = dataObj?.paymentSuccess ?? raw?.paymentSuccess ?? false;
-      const isPaid = dataObj?.is_paid ?? raw?.is_paid ?? false;
-      const successFlag = dataObj?.success ?? raw?.success ?? false;
-
-      // MULTIPLE APPROVAL CHECKS: recognize any standard success indicator immediately
-      const isApproved =
-        statusStr === 'SUCCESS' ||
-        statusStr === 'SUCCESSFUL' ||
-        statusStr === 'COMPLETED' ||
-        statusStr === 'COMPLETE' ||
-        statusStr === 'PAID' ||
-        statusStr === 'CONFIRMED' ||
-        resultCode === 0 ||
-        resultCode === '0' ||
-        paymentSuccess === true ||
-        isPaid === true ||
-        (successFlag === true && statusStr !== 'QUEUED' && statusStr !== 'PENDING');
-
-      // Failure check: only mark failed if Safaricom or PayHero definitively returns rejection/cancel
-      const isDefinitiveFailure =
-        !isApproved &&
-        (statusStr === 'FAILED' ||
-         statusStr === 'CANCELLED' ||
-         statusStr === 'CANCELED' ||
-         statusStr === 'REJECTED' ||
-         resultCode === 1 ||
-         resultCode === 1031 ||
-         resultCode === 1032 ||
-         resultCode === 1037);
-
-      if (isDefinitiveFailure) {
-        await supabaseAdmin.from('gn_transactions').update({ payload: JSON.parse(JSON.stringify({ ...txn, status: 'Failed' })) }).eq('id', txn.id);
-        throw new Error('Payment was cancelled or declined on your phone');
-      }
-
-      if (!isApproved) return { pending: true, session: null };
-    }
-
-    const { data: existing } = await supabaseAdmin.from('gn_sessions').select('payload').eq('id', txn.id).maybeSingle();
-    if (existing) return { pending: false, session: existing.payload as unknown as Session };
-
-    const now = Date.now(), totalMs = getPass(txn.passId).hours * 3600_000;
-    const companionPin = getCompanionPin(null, txn.phone);
-    const session: Session = {
-      id: txn.id,
-      phone: txn.phone,
-      passId: txn.passId,
-      totalMs,
-      remainingMs: totalMs,
-      lastTick: now,
-      online: true,
-      startedAt: now,
-      companionPin,
-    };
-    const sessionPayload = {
-      ...session,
-      bound_device_id: data.deviceId || txn.id,
-      companion_pin: companionPin,
-      paired_companion_id: null,
-    };
-
-    await supabaseAdmin.from('gn_sessions').upsert({
-      id: txn.id,
-      user_id: data.deviceId || txn.id,
-      payload: JSON.parse(JSON.stringify(sessionPayload))
-    }, { onConflict: 'id', ignoreDuplicates: true });
-
-    await supabaseAdmin.from('gn_transactions').update({
-      payload: JSON.parse(JSON.stringify({ ...txn, status: 'Activated' }))
-    }).eq('id', txn.id);
-
-    return { pending: false, session };
+    return confirmTxn(supabaseAdmin, row, data.deviceId);
   });
 
 export const restoreCloudPass = createServerFn({ method: 'POST' })
@@ -344,30 +228,36 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
     const phone = normalizePhone(data.phone);
     if (!phone) throw new Error('Enter a valid M-Pesa phone number');
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { confirmTxn } = await import('./payments.server');
+
+    // Activate any paid-but-unconfirmed payments first (e.g. app closed during STK push).
+    const { data: txRows } = await supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(200);
+    for (const t of txRows || []) {
+      const p = t.payload as any;
+      if (p?.phone === phone && p.status === 'Pending' && Date.now() - (p.at || 0) < 86_400_000) {
+        try { await confirmTxn(supabaseAdmin, t, data.deviceId); } catch {}
+      }
+    }
 
     const { data: rows, error } = await supabaseAdmin.from('gn_sessions').select('*').order('updated_at', { ascending: false });
     if (error || !rows || rows.length === 0) throw new Error('No active pass found for this phone number');
 
     const matching = rows.filter((r) => {
       const p = r.payload as any;
-      if (!p || p.phone !== phone) return false;
-      const isUnexpired = p.remainingMs > 0 || (p.startedAt && p.startedAt + (p.totalMs || 0) > Date.now());
-      return isUnexpired;
+      return p && p.phone === phone && p.remainingMs > 0;
     });
 
-    if (matching.length === 0) throw new Error('No unexpired pass found for this phone number');
+    if (matching.length === 0) throw new Error('No active pass found for this phone number');
 
     const targetRow = matching[0];
     if (!targetRow) throw new Error('No unexpired pass found for this phone number');
     const payload = targetRow.payload as any;
 
     // Check device binding to prevent sharing across multiple phones
-    if (payload.bound_device_id && payload.bound_device_id !== data.deviceId) {
-      throw new Error('This pass is already registered on another device. Sharing passes across phones is not permitted.');
-    }
-
-    // Bind this device if not yet bound
-    if (!payload.bound_device_id) {
+    // Reinstall / cleared storage regenerates the device ID: re-bind the pass to this
+    // device (the old install loses it), so one phone keeps one active pass.
+    if (payload.bound_device_id !== data.deviceId) {
+      if (payload.paired_companion_id === data.deviceId) payload.paired_companion_id = null;
       payload.bound_device_id = data.deviceId;
       await supabaseAdmin.from('gn_sessions').update({
         payload: JSON.parse(JSON.stringify(payload)),
@@ -411,8 +301,7 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
     const matching = rows.filter((r) => {
       const p = r.payload as any;
       if (!p || p.phone !== phone) return false;
-      const isUnexpired = p.remainingMs > 0 || (p.startedAt && p.startedAt + (p.totalMs || 0) > Date.now());
-      return isUnexpired;
+      return p.remainingMs > 0;
     });
 
     if (matching.length === 0) throw new Error('No active or unexpired pass found for this phone number');
@@ -422,14 +311,16 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
     const payload = targetRow.payload as any;
 
     const expectedPin = payload.companion_pin || getCompanionPin(null, payload.phone);
-    if (inputPin !== expectedPin && inputPin !== '842109') {
+    if (inputPin !== expectedPin) {
       throw new Error('Incorrect companion PIN. Please check the 6-digit code on the primary device.');
     }
 
     // Protection B: Strictly allow only ONE companion device!
-    if (payload.paired_companion_id && payload.paired_companion_id !== data.deviceId) {
-      throw new Error('Companion limit reached! This pass is already tied to another companion device. Only 1 device (laptop or companion phone) is allowed.');
+    if (payload.bound_device_id === data.deviceId) {
+      throw new Error('This device already holds the main pass. Pair a different laptop or phone.');
     }
+    // A correct PIN moves the single companion slot to this device (covers cleared storage);
+    // the previous companion loses access, so only one companion is ever linked.
 
     // Bind this companion device ID
     payload.paired_companion_id = data.deviceId;
@@ -507,8 +398,11 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     const session = row.payload as unknown as Session;
     const { data: pool } = await supabaseAdmin.from('gn_networks').select('bssid');
     const online = Boolean(data.bssid && pool?.some((n) => n.bssid.toUpperCase() === data.bssid?.toUpperCase())) || Boolean(data.relayReady);
+    const { data: svc } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
+    let serviceActive = true;
+    try { serviceActive = svc?.api_token ? JSON.parse(svc.api_token).active !== false : true; } catch {}
     const now = Date.now();
-    const updated = { ...session, remainingMs: tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), session.online), lastTick: now, online };
+    const updated = { ...session, remainingMs: tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), session.online), lastTick: now, online: online && serviceActive };
     await supabaseAdmin.from('gn_sessions').update({
       payload: JSON.parse(JSON.stringify(updated)),
       updated_at: new Date(now).toISOString()
