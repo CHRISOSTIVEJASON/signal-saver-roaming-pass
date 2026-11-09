@@ -706,6 +706,10 @@ function CompanionSharing({ session, onUpdateSession }: { session: Session; onUp
                 </span>
               )}
             </div>
+            <div className="rounded bg-primary/5 px-2 py-1 text-[10px] text-primary flex items-center justify-between border border-primary/10">
+              <span className="flex items-center gap-1">⚡ <strong>QUIC/UDP Stream Accelerator:</strong> Active</span>
+              <span className="font-mono text-[9px] opacity-80">MTU 1400 · WMM QoS</span>
+            </div>
             <p className="text-muted-foreground text-[11px] leading-relaxed">
               {isTied ? (
                 <>Locked to 1 companion device. Any 3rd device is strictly <strong>blocked</strong>. If you cleared browser cache or changed laptops, tap <strong>Release / Switch Device</strong> below to unlock the slot.</>

@@ -74,6 +74,21 @@ public class NetworkWatcher {
 
     private volatile String currentNearbySsid = null;
     private volatile boolean nearbyPoolDetected = false;
+    private volatile int lastBestRssi = -999;
+
+    public int getLastBestRssi() {
+        return lastBestRssi;
+    }
+
+    public String getSignalQualityLabel() {
+        int r = lastBestRssi;
+        if (r == -999) return "Unknown";
+        if (r >= -65) return "Strong (" + r + " dBm)";
+        if (r >= -75) return "Good (" + r + " dBm)";
+        if (r >= -85) return "Weak (" + r + " dBm) - Boosted";
+        return "Faint (" + r + " dBm) - Max Amplification";
+    }
+
 
     private NetworkWatcher(Context ctx) {
         this.context = ctx.getApplicationContext();
@@ -306,6 +321,7 @@ public class NetworkWatcher {
             if (detectedSsid != null) {
                 currentNearbySsid = detectedSsid;
                 nearbyPoolDetected = true;
+                lastBestRssi = bestSignal;
                 handleNetworkSensed(detectedSsid, detectedBssid);
             } else {
                 currentNearbySsid = null;

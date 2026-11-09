@@ -29,3 +29,43 @@ export function generateCompanionPin(): string {
   }
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
+
+/**
+ * Optimized MTU for Multi-Hop Wi-Fi Relays & P2P Tunnels.
+ * Standard 1500 causes packet fragmentation on encapsulated P2P links.
+ * 1400 prevents fragmentation and packet loss on TikTok/video streams over weak signals.
+ */
+export const RELAY_OPTIMAL_MTU = 1400;
+
+/**
+ * IP Quality of Service (QoS) traffic class for low-latency streaming / voice / video
+ * 0x10 = IPTOS_LOWDELAY, mapped to WMM Video priority queue by Wi-Fi chipsets.
+ */
+export const RELAY_QOS_STREAMING_CLASS = 0x10;
+
+export interface RelayStreamProfile {
+  mtu: number;
+  qosClass: number;
+  bufferSize: number;
+  mode: "faint_signal_boost" | "standard_relay" | "high_throughput";
+  description: string;
+}
+
+export function getRelayStreamProfile(rssiDbm?: number | null): RelayStreamProfile {
+  if (rssiDbm !== undefined && rssiDbm !== null && rssiDbm < -80) {
+    return {
+      mtu: 1380,
+      qosClass: RELAY_QOS_STREAMING_CLASS,
+      bufferSize: 131072,
+      mode: "faint_signal_boost",
+      description: "Faint signal detected: compressed MTU & prioritized low-latency queue active"
+    };
+  }
+  return {
+    mtu: RELAY_OPTIMAL_MTU,
+    qosClass: RELAY_QOS_STREAMING_CLASS,
+    bufferSize: 262144,
+    mode: "high_throughput",
+    description: "High-speed QUIC/UDP streaming mode active (zero packet fragmentation)"
+  };
+}

@@ -50,3 +50,26 @@ describe("timer preservation", () => {
     expect(_tick(3_600_000, 0, 10_000_000, false)).toBe(3_600_000);
   });
 });
+
+import { RELAY_OPTIMAL_MTU, RELAY_QOS_STREAMING_CLASS, getRelayStreamProfile } from "@/lib/relay";
+
+describe("Relay Low-Latency Stream Acceleration", () => {
+  it("enforces MTU 1400 to prevent multi-hop Wi-Fi Direct packet fragmentation", () => {
+    expect(RELAY_OPTIMAL_MTU).toBe(1400);
+    expect(RELAY_QOS_STREAMING_CLASS).toBe(0x10);
+  });
+
+  it("activates faint signal boost when RSSI is lower than -80 dBm", () => {
+    const profile = getRelayStreamProfile(-85);
+    expect(profile.mode).toBe("faint_signal_boost");
+    expect(profile.mtu).toBe(1380);
+    expect(profile.qosClass).toBe(0x10);
+  });
+
+  it("activates high-throughput zero-fragmentation mode for normal/strong signals", () => {
+    const profile = getRelayStreamProfile(-65);
+    expect(profile.mode).toBe("high_throughput");
+    expect(profile.mtu).toBe(1400);
+    expect(profile.bufferSize).toBe(262144);
+  });
+});

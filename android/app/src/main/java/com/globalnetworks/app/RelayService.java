@@ -47,6 +47,44 @@ public class RelayService extends Service {
     private static final AtomicLong totalReceivedBytes = new AtomicLong(0);
 
     private ServerSocket serverSocket;
+    // High-speed in-memory DNS cache for UDP/QUIC streams (e.g. TikTok, YouTube HTTP/3 over UDP port 443)
+    private static final java.util.concurrent.ConcurrentHashMap<String, CachedDns> udpDnsCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static class CachedDns {
+        final InetAddress address;
+        final long expiresAt;
+        CachedDns(InetAddress addr, long ttlMs) {
+            this.address = addr;
+            this.expiresAt = System.currentTimeMillis() + ttlMs;
+        }
+        boolean isValid() {
+            return System.currentTimeMillis() < expiresAt;
+        }
+    }
+
+    private static InetAddress resolveFastDns(String domain, Network upstreamNet) {
+        CachedDns entry = udpDnsCache.get(domain);
+        if (entry != null && entry.isValid()) {
+            return entry.address;
+        }
+        InetAddress resolved = null;
+        if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
+            try {
+                InetAddress[] addrs = upstreamNet.getAllByName(domain);
+                resolved = (addrs != null && addrs.length > 0) ? addrs[0] : InetAddress.getByName(domain);
+            } catch (Exception ignored) {}
+        }
+        if (resolved == null) {
+            try {
+                resolved = InetAddress.getByName(domain);
+            } catch (Exception ignored) {}
+        }
+        if (resolved != null) {
+            udpDnsCache.put(domain, new CachedDns(resolved, 10 * 60 * 1000L)); // 10 minutes cache
+        }
+        return resolved;
+    }
+
     private DatagramSocket dnsRelaySocket;
     private ExecutorService threadPool;
     private PowerManager.WakeLock wakeLock;
@@ -404,6 +442,11 @@ public class RelayService extends Service {
         try {
             hostUdpSocket = new DatagramSocket(null);
             hostUdpSocket.setReuseAddress(true);
+            hostUdpSocket.setReceiveBufferSize(262144);
+            hostUdpSocket.setSendBufferSize(262144);
+            try {
+                hostUdpSocket.setTrafficClass(0x10); // IPTOS_LOWDELAY / WMM Video priority queue
+            } catch (Exception ignored) {}
             hostUdpSocket.bind(new InetSocketAddress("0.0.0.0", 0));
             int boundPort = hostUdpSocket.getLocalPort();
 
@@ -428,6 +471,11 @@ public class RelayService extends Service {
             out.flush();
 
             upstreamUdpSocket = new DatagramSocket();
+            upstreamUdpSocket.setReceiveBufferSize(262144);
+            upstreamUdpSocket.setSendBufferSize(262144);
+            try {
+                upstreamUdpSocket.setTrafficClass(0x10); // IPTOS_LOWDELAY / WMM Video priority queue
+            } catch (Exception ignored) {}
             Network upstreamNet = getActiveInternetNetwork();
             if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
                 upstreamNet.bindSocket(upstreamUdpSocket);
@@ -466,16 +514,8 @@ public class RelayService extends Service {
                             if (len < offset + dLen + 2) continue;
                             String domain = new String(data, offset, dLen, StandardCharsets.UTF_8);
                             offset += dLen;
-                            if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
-                                try {
-                                    InetAddress[] addrs = upstreamNet.getAllByName(domain);
-                                    destAddr = (addrs != null && addrs.length > 0) ? addrs[0] : InetAddress.getByName(domain);
-                                } catch (Exception e) {
-                                    destAddr = InetAddress.getByName(domain);
-                                }
-                            } else {
-                                destAddr = InetAddress.getByName(domain);
-                            }
+                            destAddr = resolveFastDns(domain, upstreamNet);
+                            if (destAddr == null) continue;
                         } else if (atyp == 0x04) {
                             if (len < offset + 16 + 2) continue;
                             byte[] ipv6 = Arrays.copyOfRange(data, offset, offset + 16);
@@ -563,8 +603,11 @@ public class RelayService extends Service {
         Socket socket = new Socket();
         socket.setTcpNoDelay(true);
         socket.setKeepAlive(true);
-        socket.setReceiveBufferSize(65536);
-        socket.setSendBufferSize(65536);
+        socket.setReceiveBufferSize(131072);
+        socket.setSendBufferSize(131072);
+        try {
+            socket.setTrafficClass(0x10); // Low latency streaming QoS
+        } catch (Exception ignored) {}
 
         Network upstreamNet = getActiveInternetNetwork();
         if (upstreamNet != null && Build.VERSION.SDK_INT >= 23) {
@@ -596,7 +639,9 @@ public class RelayService extends Service {
                 int read;
                 while (active.get() && (read = clientIn.read(buf)) != -1) {
                     out.write(buf, 0, read);
-                    out.flush();
+                    if (clientIn.available() == 0) {
+                        out.flush();
+                    }
                     totalSentBytes.addAndGet(read);
                 }
             } catch (Exception ignored) {
@@ -612,7 +657,9 @@ public class RelayService extends Service {
                 int read;
                 while (active.get() && (read = in.read(buf)) != -1) {
                     out.write(buf, 0, read);
-                    out.flush();
+                    if (in.available() == 0) {
+                        out.flush();
+                    }
                     totalReceivedBytes.addAndGet(read);
                 }
             } catch (Exception ignored) {

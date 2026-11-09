@@ -111,7 +111,8 @@ public class RelayVpnService extends VpnService {
             builder.addRoute("0.0.0.0", 0);
             builder.addDnsServer("8.8.8.8");
             builder.addDnsServer("1.1.1.1");
-            builder.setMtu(1500);
+            // MTU 1400: Prevents packet fragmentation over Wi-Fi Direct and VPN encapsulation for smooth video streaming
+            builder.setMtu(1400);
 
             try {
                 builder.addDisallowedApplication(getPackageName());
@@ -131,7 +132,7 @@ public class RelayVpnService extends VpnService {
                     "  connect-timeout: 10000\n" +
                     "tunnel:\n" +
                     "  name: tun0\n" +
-                    "  mtu: 1500\n" +
+                    "  mtu: 1400\n" +
                     "  ipv4: 10.8.0.2\n" +
                     "socks5:\n" +
                     "  port: " + hostPort + "\n" +
