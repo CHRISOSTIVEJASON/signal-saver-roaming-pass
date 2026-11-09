@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_PASSCODE } from "./rules";
+import { DEFAULT_PASSCODE, APP_VERSION } from "./rules";
 import { cached, isSharedKey, saveShared, useCached } from "./cloud-cache";
 import type { MeshLink } from "./relay";
 import { toast } from "sonner";
@@ -65,6 +65,7 @@ export const KEYS = {
   relay: "gn_relay",
   device: "gn_device",
   mesh: "gn_mesh_links",
+  appVersion: "gn_app_version",
 };
 
 export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "", latestVersion: "1.0.0", updateRequired: false };
@@ -157,4 +158,46 @@ export function getDeviceId(): string {
     try { localStorage.setItem("gn_device_id", id); } catch {}
   }
   return id;
+}
+
+export function getRunningAppVersion(): string {
+  if (typeof window === "undefined") return APP_VERSION;
+  try {
+    const saved = localStorage.getItem(KEYS.appVersion);
+    if (saved && saved.trim()) return saved.trim();
+  } catch {}
+  return APP_VERSION;
+}
+
+export function setRunningAppVersion(ver: string) {
+  if (typeof window !== "undefined" && ver?.trim()) {
+    try {
+      localStorage.setItem(KEYS.appVersion, ver.trim());
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.appVersion }));
+    } catch {}
+  }
+}
+
+export function useAppVersion() {
+  const [ver, setVer] = useState<string>(getRunningAppVersion);
+  useEffect(() => {
+    setVer(getRunningAppVersion());
+    const on = (e: Event) => {
+      const k = (e as CustomEvent).detail ?? (e as StorageEvent).key;
+      if (k === KEYS.appVersion) setVer(getRunningAppVersion());
+    };
+    window.addEventListener("gn-store", on);
+    window.addEventListener("storage", on);
+    return () => {
+      window.removeEventListener("gn-store", on);
+      window.removeEventListener("storage", on);
+    };
+  }, []);
+
+  const update = useCallback((newVer: string) => {
+    setRunningAppVersion(newVer);
+    setVer(newVer);
+  }, []);
+
+  return [ver, update] as const;
 }

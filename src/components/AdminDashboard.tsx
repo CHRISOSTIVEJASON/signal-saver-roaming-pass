@@ -11,11 +11,12 @@ import type { MeshLink } from "@/lib/relay";
 import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
 import { saveShared } from '@/lib/cloud-cache';
 import { useConfig, useDevice } from "@/components/Gates";
-import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode } from "@/lib/store";
+import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode, useAppVersion } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
 export function AdminDashboard({ onExit }: { onExit: () => void }) {
+  const [runningVer] = useAppVersion();
   const [localTxns, setLocalTxns] = useStored<Txn[]>(KEYS.txns, []);
   const [localSessions, setLocalSessions] = useStored<Session[]>(KEYS.sessions, []);
   const [cloudTxns, setCloudTxns] = useState<Txn[]>([]);
@@ -86,7 +87,10 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-xs uppercase tracking-widest text-accent">Admin Console</div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs uppercase tracking-widest text-accent">Admin Console</span>
+            <span className="font-mono text-xs rounded bg-accent/20 px-1.5 py-0.5 text-accent font-semibold">v{runningVer}</span>
+          </div>
           <h2 className="text-lg font-bold">Dashboard</h2>
         </div>
         <Button onClick={onExit} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs hover:bg-secondary">
@@ -400,6 +404,7 @@ function PasscodeCard() {
 
 function AppSettingsCard() {
   const [saved, setSaved] = useConfig();
+  const [runningVer] = useAppVersion();
   const [c, setC] = useState(saved);
   const [saving, setSaving] = useState(false);
   const saveCloudSettings = useServerFn(savePaymentConfig);
@@ -426,8 +431,17 @@ function AppSettingsCard() {
   return (
     <Panel title="Android App & Updates" icon={<Smartphone className="h-4 w-4" />}>
       <div className="space-y-3">
+        <div className="rounded-xl border border-primary/30 bg-primary/10 p-3.5 text-sm">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Installed App Version</div>
+          <div className="mt-1 font-bold text-primary text-base flex items-center gap-2">
+            <span>This app is installed on:</span>
+            <span className="font-mono bg-primary/20 px-2.5 py-0.5 rounded text-primary text-base font-extrabold">v{runningVer}</span>
+          </div>
+        </div>
         <Field label="APK download link"><input className={inputCls} value={c.apkUrl} placeholder="https://…/global-networks.apk" onChange={(e) => setC({ ...c, apkUrl: e.target.value })} /></Field>
-        <Field label={`Latest version (installed app is ${APP_VERSION})`}><input className={inputCls + " font-mono"} value={c.latestVersion} onChange={(e) => setC({ ...c, latestVersion: e.target.value })} /></Field>
+        <Field label="Target Version for Updates (fill new version here)">
+          <input className={inputCls + " font-mono"} value={c.latestVersion} onChange={(e) => setC({ ...c, latestVersion: e.target.value })} />
+        </Field>
         <label className="flex items-center justify-between rounded-lg border border-border p-3 text-sm">
           Require users to update (blocks app till updated)
           <input type="checkbox" checked={c.updateRequired} onChange={(e) => setC({ ...c, updateRequired: e.target.checked })} className="h-5 w-5 accent-[var(--primary)]" />

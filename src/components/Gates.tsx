@@ -5,7 +5,7 @@ import { Capacitor } from "@capacitor/core";
 import { GlobalRelay } from "@/lib/native-relay";
 import { Button } from "./ui/button";
 import { APP_VERSION } from "@/lib/rules";
-import { KEYS, defaultConfig, defaultDevice, useStored, type Device, type Network, type PayConfig, type Perm } from "@/lib/store";
+import { KEYS, defaultConfig, defaultDevice, useStored, useAppVersion, setRunningAppVersion, type Device, type Network, type PayConfig, type Perm } from "@/lib/store";
 
 export const useDevice = () => useStored<Device>(KEYS.device, defaultDevice);
 export const useConfig = () => {
@@ -91,6 +91,7 @@ export function DownloadGate() {
 
 export function UpdateGate() {
   const [cfg] = useConfig();
+  const [runningVer] = useAppVersion();
   const [status, setStatus] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
@@ -124,6 +125,7 @@ export function UpdateGate() {
           setProgress(100);
           setStatus("Update downloaded! Launching Android package installer…");
           setCompleted(true);
+          setRunningAppVersion(cfg.latestVersion);
         }
       } catch (err: any) {
         setError(err?.message || "Failed to download update. Please check internet connection.");
@@ -144,8 +146,12 @@ export function UpdateGate() {
         a.click();
         document.body.removeChild(a);
         setProgress(100);
-        setStatus("Update package downloaded!");
+        setStatus("Update downloaded! Applying version v" + cfg.latestVersion + "…");
         setCompleted(true);
+        setRunningAppVersion(cfg.latestVersion);
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
       } catch (err: any) {
         setError("Unable to download update package: " + (err?.message || "Unknown error"));
         setStatus(null);
@@ -165,7 +171,7 @@ export function UpdateGate() {
             ? "Package downloaded. Please tap 'Install' on your device to complete the update."
             : status
             ? "Downloading the latest update package directly inside the app. Please wait…"
-            : `Version ${cfg.latestVersion} is required to continue. You have ${APP_VERSION}.`}
+            : `Version ${cfg.latestVersion} is required to continue. This app is running v${runningVer}.`}
         </p>
 
         {status && (

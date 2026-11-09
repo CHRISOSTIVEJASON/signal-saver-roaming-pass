@@ -11,7 +11,7 @@ import { AdminDashboard } from "@/components/AdminDashboard";
 import { Button } from "@/components/ui/button";
 import { APP_VERSION, isUpdateRequired } from "@/lib/rules";
 import { DownloadGate, Onboarding, PermissionBlock, TestControls, UpdateGate, useConfig, useDevice } from "@/components/Gates";
-import { getPasscode } from "@/lib/store";
+import { getPasscode, useAppVersion } from "@/lib/store";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -24,6 +24,7 @@ function Index() {
   const [unlocking, setUnlocking] = useState(false);
   const [device, setDevice] = useDevice();
   const [cfg] = useConfig();
+  const [runningVer, setRunningVer] = useAppVersion();
   const [isOnline, setIsOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
 
   const verifyCloudPasscode = useServerFn(verifyMasterPasscode);
@@ -44,6 +45,13 @@ function Index() {
     }
   }, [isNative, isLaptopOrDesktop, device.appMode, device.onboarded, setDevice]);
 
+  // On web/laptop, when refreshed or loaded, automatically pick up and record newer version from settings
+  useEffect(() => {
+    if (!isNative && cfg.latestVersion && isUpdateRequired(runningVer, cfg.latestVersion, false)) {
+      setRunningVer(cfg.latestVersion);
+    }
+  }, [isNative, cfg.latestVersion, runningVer, setRunningVer]);
+
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -63,8 +71,8 @@ function Index() {
     : (!allGranted) ? <PermissionBlock />
     : <ClientPortal />;
 
-  // Only lock native Android APK clients for APK updates; web clients always run latest web build
-  const mustUpdate = !admin && inApp && isNative && isUpdateRequired(APP_VERSION, cfg.latestVersion, cfg.updateRequired);
+  // Lock screens everywhere (native Android and web) when a newer version is required
+  const mustUpdate = !admin && inApp && isUpdateRequired(runningVer, cfg.latestVersion, cfg.updateRequired);
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,6 +122,12 @@ function Index() {
         <header className="mb-4 px-6 text-center">
           <h1 className="glow-text text-3xl font-bold tracking-[0.2em] sm:text-4xl">GLOBAL NETWORKS</h1>
           <p className="mt-1 text-xs uppercase tracking-[0.3em] text-muted-foreground">Internet that follows you</p>
+          <div className="mt-2.5 flex items-center justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3.5 py-1 text-xs sm:text-sm font-semibold text-primary shadow-sm">
+              <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+              <span>Version {runningVer}</span>
+            </span>
+          </div>
         </header>
         {body}
       </div>
