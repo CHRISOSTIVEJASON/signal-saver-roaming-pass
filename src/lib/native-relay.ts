@@ -19,6 +19,7 @@ export const GlobalRelay = registerPlugin<{
   requestAccess(): Promise<{ granted: boolean }>;
   checkMandatoryPermission(): Promise<{ granted: boolean; vpnPrepared: boolean; ready: boolean }>;
   openSettings(): Promise<void>;
+  openHotspotSettings(): Promise<void>;
   requestBatteryExemption(): Promise<void>;
   getState(): Promise<NativeState>;
   start(options: { active: boolean; upstreamInPool: boolean }): Promise<void>;

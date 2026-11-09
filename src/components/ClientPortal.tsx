@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX } from "lucide-react";
+import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState } from "@/lib/rules";
-import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
+import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
 import { startCloudPayment, confirmCloudPayment, restoreCloudPass } from "@/lib/cloud.functions";
@@ -11,7 +11,7 @@ import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
 import { getDeviceId } from "@/lib/store";
 import { X } from "lucide-react";
-import { relayProvidesConnection } from "@/lib/relay";
+import { relayProvidesConnection, getCompanionPin } from "@/lib/relay";
 import { Button } from "./ui/button";
 import { Capacitor } from "@capacitor/core";
 import { CaptiveLogin } from "./CaptiveLogin";
@@ -374,6 +374,137 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
   );
 }
 
+
+function CompanionSharing({ session }: { session: Session }) {
+  const [deviceState] = useStored<Device>(KEYS.device, defaultDevice);
+  const [exemptedList] = useExemptedNumbers();
+  const [copied, setCopied] = useState(false);
+  const isNative = Capacitor.isNativePlatform();
+
+  const networkName = deviceState.relay?.networkName || ("GN-SHARE-" + (session.phone.replace(/\D/g, "").slice(-4) || "PASS"));
+  const pin = getCompanionPin(deviceState.relay?.passphrase, session.phone);
+  const peerCount = deviceState.relay?.peerCount ?? 0;
+  
+  const normPhone = normalizePhone(session.phone);
+  const isExempt = exemptedList.some((e) => e.phone === normPhone || e.phone === session.phone);
+
+  const copyPin = () => {
+    try {
+      navigator.clipboard?.writeText?.(pin);
+      setCopied(true);
+      toast.success("Companion PIN copied: " + pin);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.success("PIN: " + pin);
+    }
+  };
+
+  const handleOpenHotspot = async () => {
+    try {
+      if (typeof (GlobalRelay as any).openHotspotSettings === "function") {
+        await (GlobalRelay as any).openHotspotSettings();
+      } else {
+        await GlobalRelay.openSettings();
+      }
+    } catch {
+      await GlobalRelay.openSettings();
+    }
+  };
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-xl border border-border bg-card/70 p-4 text-left shadow-sm backdrop-blur-sm">
+      <div className="flex items-center justify-between pb-2.5 border-b border-border/50">
+        <div className="flex items-center gap-2">
+          <div className="rounded-lg bg-primary/10 p-2 text-primary">
+            <Share2 className="h-4 w-4" />
+          </div>
+          <div>
+            <h4 className="text-sm font-semibold flex items-center gap-1.5">
+              Companion & Laptop Sharing
+              {isExempt && (
+                <span className="rounded-full bg-emerald-500/10 text-emerald-500 px-1.5 py-0.5 text-[10px] font-medium border border-emerald-500/20">
+                  VIP Free
+                </span>
+              )}
+            </h4>
+            <p className="text-[11px] text-muted-foreground">Share this active pass with your laptop or phone</p>
+          </div>
+        </div>
+        <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          Active
+        </span>
+      </div>
+
+      {isNative ? (
+        <div className="space-y-3 pt-3">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-lg bg-secondary/50 p-2.5 border border-border/40">
+              <span className="text-[10px] text-muted-foreground uppercase font-mono tracking-wider block">Wi-Fi Name (SSID)</span>
+              <span className="font-mono font-medium text-foreground truncate block mt-0.5">{networkName}</span>
+            </div>
+            <div className="rounded-lg bg-secondary/50 p-2.5 border border-border/40 flex items-center justify-between">
+              <div>
+                <span className="text-[10px] text-muted-foreground uppercase font-mono tracking-wider block">6-Digit PIN</span>
+                <span className="font-mono text-base font-bold text-primary block mt-0.5 tracking-widest">{pin}</span>
+              </div>
+              <Button size="icon" variant="ghost" onClick={copyPin} className="h-7 w-7 text-muted-foreground hover:text-foreground">
+                {copied ? <Check className="h-3.5 w-3.5 text-primary" /> : <Copy className="h-3.5 w-3.5" />}
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-muted/40 p-2.5 text-[11px] space-y-1.5 text-muted-foreground border border-border/30">
+            <div className="font-medium text-foreground text-[12px] flex items-center gap-1.5">
+              <Laptop className="h-3.5 w-3.5 text-primary" /> How to connect from Laptop or 2nd phone:
+            </div>
+            <ol className="list-decimal list-inside space-y-1 pl-1">
+              <li>Open Wi-Fi on your laptop/phone and connect to <span className="font-mono text-foreground font-semibold">{networkName}</span>.</li>
+              <li>Enter the 6-digit PIN <span className="font-mono text-foreground font-semibold">{pin}</span>.</li>
+              <li>Or tap <strong>Open Hotspot Settings</strong> below to share your phone's personal hotspot directly.</li>
+            </ol>
+          </div>
+
+          <div className="flex items-center justify-between pt-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5">
+              <Users className="h-3.5 w-3.5 text-primary" />
+              Connected: <strong className="text-foreground">{peerCount}</strong> {peerCount === 1 ? "device" : "devices"}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleOpenHotspot}
+              className="h-8 text-xs gap-1.5 rounded-lg border-border"
+            >
+              <Wifi className="h-3.5 w-3.5 text-primary" /> Open Hotspot Settings
+            </Button>
+          </div>
+        </div>
+      ) : (
+        /* Laptop / Desktop Web View */
+        <div className="space-y-3 pt-3 text-xs text-muted-foreground">
+          <div className="rounded-lg bg-muted/40 p-3 space-y-2 border border-border/40">
+            <div className="font-medium text-foreground flex items-center gap-1.5 text-sm">
+              <Smartphone className="h-4 w-4 text-primary" /> Share Laptop Internet with your Phone:
+            </div>
+            <p className="text-[12px] leading-relaxed">
+              Your laptop is connected with an active pass. To share with your phone without paying twice:
+            </p>
+            <div className="space-y-1.5 pl-1 text-[11px]">
+              <div>• <strong>Windows:</strong> Press <kbd className="rounded border px-1 py-0.5 font-mono text-[10px] bg-background">Win + A</kbd> and click <strong>Mobile Hotspot</strong>.</div>
+              <div>• <strong>Mac:</strong> Open <strong>System Settings → Sharing → Internet Sharing</strong> and turn it on.</div>
+            </div>
+            <p className="text-[11px] text-foreground font-medium pt-1">
+              Connect your phone to your laptop's Wi-Fi hotspot to browse freely on this active pass!
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ActiveSession({ session, setSessions, onEnd }: { session: Session; setSessions: (f: (p: Session[]) => Session[]) => void; onEnd: () => void }) {
   const [, force] = useState(0);
   const ref = useRef(session);
@@ -426,7 +557,8 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
       <div className="h-2 overflow-hidden rounded-full bg-muted">
         <div className={`h-full transition-all ${session.online ? "bg-primary" : "bg-warning"}`} style={{ width: `${pct}%` }} />
       </div>
-            <div className="pt-2 flex flex-col gap-2">
+            <CompanionSharing session={session} />
+      <div className="pt-2 flex flex-col gap-2">
         <Button variant="ghost" onClick={onEnd} className="text-xs text-muted-foreground underline-offset-4 hover:underline">Buy another pass</Button>
       </div>
     </div>

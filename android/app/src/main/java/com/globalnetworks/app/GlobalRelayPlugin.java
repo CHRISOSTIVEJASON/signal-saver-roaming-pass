@@ -190,6 +190,23 @@ public class GlobalRelayPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void openHotspotSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_MAIN);
+            intent.setClassName("com.android.settings", "com.android.settings.TetherSettings");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+        } catch (Exception e) {
+            try {
+                Intent fallback = new Intent(Settings.ACTION_WIRELESS_SETTINGS);
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(fallback);
+            } catch (Exception ignored) {}
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
     public void openSettings(PluginCall call) {
         getActivity().startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getContext().getPackageName())));
         call.resolve();

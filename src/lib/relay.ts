@@ -3,7 +3,19 @@ export type MeshLink = {
   id: string; groupOwner: string; clients: string[]; networkName: string;
   source: "native" | "simulated"; connected: boolean; transportReady: boolean;
   upstreamInPool: boolean; updatedAt: number; sentBytes: number; receivedBytes: number;
+  passphrase?: string;
+  isGroupOwner?: boolean;
+  groupOwnerAddress?: string;
+  peerCount?: number;
 };
+
 export function relayProvidesConnection(link: MeshLink | null | undefined, now: number) {
   return Boolean(link?.connected && link.transportReady && link.upstreamInPool && now - link.updatedAt < 30_000);
+}
+
+export function getCompanionPin(passphrase?: string | null, phone?: string): string {
+  if (passphrase && passphrase.trim().length >= 4) return passphrase.trim();
+  const digits = (phone || "").replace(/\D/g, "");
+  if (digits.length >= 6) return digits.slice(-6);
+  return "842109";
 }
