@@ -9,8 +9,8 @@ describe("rules", () => {
     expect(changePasscode("2006", "9999")).toEqual({ ok: true, passcode: "9999" });
   });
   it("prices passes at KES 10/15h and KES 18/30h", () => {
-    expect([getPass("p15").amount, getPass("p15").hours]).toEqual([10, 15]);
-    expect([getPass("p30").amount, getPass("p30").hours]).toEqual([18, 30]);
+    expect([getPass("p15")!.amount, getPass("p15")!.hours]).toEqual([10, 15]);
+    expect([getPass("p30")!.amount, getPass("p30")!.hours]).toEqual([18, 30]);
   });
   it("freezes time while offline", () => {
     expect(tick(1000, 0, 500, false)).toBe(1000);

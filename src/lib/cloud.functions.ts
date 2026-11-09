@@ -477,6 +477,7 @@ export const unpairCompanionPass = createServerFn({ method: 'POST' })
 
     if (matching.length === 0) return { success: false };
     const targetRow = matching[0];
+    if (!targetRow) throw new Error("Session not found");
     const payload = targetRow.payload as any;
 
     if (payload.bound_device_id === data.deviceId || payload.paired_companion_id === data.deviceId) {
