@@ -19,7 +19,7 @@ export type PassId = string;
 
 export function getPass(id: string, customPasses?: PassOffer[]) {
   const pool = (customPasses && customPasses.length > 0) ? customPasses : DEFAULT_PASSES;
-  return pool.find((p) => p.id === id) ?? pool[0];
+  return (pool.find((p) => p.id === id) ?? pool[0] ?? DEFAULT_PASSES[0]) as PassOffer;
 }
 
 /** Normalises Safaricom numbers (07.. / 01.. / 2547.. / +2541..) to 2547XXXXXXXX. Returns null if invalid. */

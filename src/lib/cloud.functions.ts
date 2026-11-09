@@ -89,7 +89,7 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
   });
 
 export const startCloudPayment = createServerFn({ method: 'POST' })
-  .validator((input: { phone: string; passId: 'p15' | 'p30'; deviceId?: string }) => z.object({
+  .validator((input: { phone: string; passId: string; deviceId?: string }) => z.object({
     phone: z.string(),
     passId: z.string(),
     deviceId: z.string().optional()
@@ -303,7 +303,7 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
     if (existing) return { pending: false, session: existing.payload as unknown as Session };
 
     const now = Date.now(), totalMs = getPass(txn.passId).hours * 3600_000;
-    const companionPin = getCompanionPin(null, phone);
+    const companionPin = getCompanionPin(null, txn.phone);
     const session: Session = {
       id: txn.id,
       phone: txn.phone,
@@ -477,6 +477,7 @@ export const unpairCompanionPass = createServerFn({ method: 'POST' })
 
     if (matching.length === 0) return { success: false };
     const targetRow = matching[0];
+    if (!targetRow) throw new Error("Session not found");
     const payload = targetRow.payload as any;
 
     if (payload.bound_device_id === data.deviceId || payload.paired_companion_id === data.deviceId) {
