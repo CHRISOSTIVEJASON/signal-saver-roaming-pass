@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState } from "@/lib/rules";
-import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
+import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, useServiceStatus, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
 import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass } from "@/lib/cloud.functions";
@@ -108,7 +108,7 @@ export function ClientPortal() {
   const session = sessions.find((s) => s.id === activeId && s.remainingMs > 0) ?? sessions.find((s) => s.remainingMs > 0);
 
   if (session && !buying) return <ActiveSession session={session} setSessions={setSessions} onEnd={() => setBuying(true)} />;
-  return <Purchase onActivated={(s) => { setSessions((p) => [s, ...p]); setActiveId(s.id); setBuying(false); }} />;
+  return <Purchase onActivated={(s) => { setSessions((p) => [{ ...s, lastTick: Date.now() }, ...p.filter((x) => x.id !== s.id)]); setActiveId(s.id); setBuying(false); }} />;
 }
 
 
@@ -242,7 +242,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           }
         }
         if (!ok || !activatedSession) {
-          throw new Error("Payment verification taking longer than expected. If you entered your PIN, tap 'Restore Active Pass' below.");
+          throw new Error("Payment verification taking longer than expected. If you entered your PIN, tap 'Check Pass / Active Status' below.");
         }
         setBusy("M-Pesa confirmed! Activating high-speed pass…");
         updateTxn(r.id, { status: "Activated" });
@@ -277,7 +277,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
       const res = await restorePass({ data: { phone: msisdn, deviceId: getDeviceId() } });
       if (res?.session) {
         onActivated(res.session);
-        toast.success("Active pass restored!");
+        toast.success(`Active pass found • ${formatClock(res.session.remainingMs)} remaining`);
         setRestoreOpen(false);
       }
     } catch (err) {
@@ -360,23 +360,24 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
-        <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
+        <div className="grid grid-cols-1 gap-2 pt-2 min-[380px]:grid-cols-2">
           <Button
-            variant="ghost"
+            variant="outline"
             type="button"
             onClick={() => setRestoreOpen(true)}
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="h-auto min-h-10 w-full min-w-0 whitespace-normal px-3 py-2 text-xs leading-tight"
           >
-            Reinstalled app? Restore Pass
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span className="min-w-0 break-words">Check Pass / Restore</span>
           </Button>
-          <span className="hidden sm:inline text-muted-foreground/30">•</span>
           <Button
-            variant="ghost"
+            variant="outline"
             type="button"
             onClick={() => setPairOpen(true)}
-            className="text-xs text-primary font-medium hover:underline flex items-center gap-1.5"
+            className="h-auto min-h-10 w-full min-w-0 whitespace-normal px-3 py-2 text-xs leading-tight"
           >
-            <Laptop className="h-3.5 w-3.5" /> Pair Companion (Laptop / Phone)
+            <Laptop className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span className="min-w-0 break-words">Pair Companion</span>
           </Button>
         </div>
       </div>
@@ -384,10 +385,10 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setRestoreOpen(false)}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-base">Restore Active Pass</h3>
+              <h3 className="font-semibold text-base">Check Pass / Active Status</h3>
               <Button variant="ghost" size="icon" onClick={() => setRestoreOpen(false)} aria-label="Close"><X className="h-4 w-4" /></Button>
             </div>
-            <p className="text-xs text-muted-foreground">Enter the M-Pesa phone number you used to purchase your pass to regain access on this device.</p>
+            <p className="text-xs text-muted-foreground">Enter the phone number used for your pass (paid or VIP). We'll show your remaining time and companion pairing, and move the pass to this phone if you reinstalled the app.</p>
             <form onSubmit={handleRestore} className="space-y-3">
               <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
                 <Smartphone className="h-4 w-4 text-muted-foreground" />
@@ -403,7 +404,7 @@ function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {
               <div className="flex gap-2">
                 <Button type="button" onClick={() => setRestoreOpen(false)} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
                 <Button type="submit" disabled={restoreBusy} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
-                  {restoreBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Restore Pass"}
+                  {restoreBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Check Pass"}
                 </Button>
               </div>
             </form>
@@ -657,6 +658,8 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
   ref.current = session;
   const { state, ssid, direct } = useWifiState();
   const [deviceState] = useStored<Device>(KEYS.device, defaultDevice);
+  const [service] = useServiceStatus();
+  const suspended = !service.active;
   const connecting = Capacitor.isNativePlatform() && state === "pool" && !direct && (!deviceState.captive?.ready || deviceState.captive.bssid !== deviceState.currentWifi?.bssid);
 
   const update = (patch: (s: Session) => Partial<Session>) =>
@@ -665,7 +668,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
   useEffect(() => {
     const step = () => {
       const now = Date.now();
-      const running = state === "pool" && !connecting;
+      const running = state === "pool" && !connecting && !suspended;
       update((s) => ({ remainingMs: tick(s.remainingMs, s.lastTick, now, running), lastTick: now, online: running }));
       if (ref.current.online) recordRelayTick(ref.current.phone);
       force((n) => n + 1);
@@ -673,7 +676,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     step();
     const t = setInterval(step, 1000);
     return () => clearInterval(t);
-  }, [session.id, state, connecting]);
+  }, [session.id, state, connecting, suspended]);
 
   const [offers] = useOffers();
   const remainingMs = tick(session.remainingMs, session.lastTick, Math.min(Date.now(), session.lastTick + 30_000), session.online);
@@ -683,6 +686,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
   return (
     <div className="space-y-5 text-center">
       <CaptiveLogin sessionId={session.id} />
+      {suspended && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5 shrink-0" />Service paused — your time is frozen{service.resumeDate ? ` until ${service.resumeDate}` : ""}</span>}
       {connecting && <span className="inline-flex items-center gap-2 text-sm text-warning"><Loader2 className="h-4 w-4 animate-spin" />Connecting — your time is preserved</span>}
       {direct && <span className="inline-flex items-center justify-center gap-2 text-sm text-primary"><Signal className="h-5 w-5 shrink-0" />Connected to GLOBAL NETWORKS (High-Speed Direct Relay)</span>}
       {state === "pool" && !direct && !connecting && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}

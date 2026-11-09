@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
+import { Route as ApiPublicPayheroCallbackRouteImport } from './routes/api/public/payhero-callback'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +23,41 @@ const ResetPasswordRoute = ResetPasswordRouteImport.update({
   path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicPayheroCallbackRoute =
+  ApiPublicPayheroCallbackRouteImport.update({
+    id: '/api/public/payhero-callback',
+    path: '/api/public/payhero-callback',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/api/public/payhero-callback': typeof ApiPublicPayheroCallbackRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/api/public/payhero-callback': typeof ApiPublicPayheroCallbackRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/api/public/payhero-callback': typeof ApiPublicPayheroCallbackRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/reset-password'
+  fullPaths: '/' | '/reset-password' | '/api/public/payhero-callback'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/reset-password'
-  id: '__root__' | '/' | '/reset-password'
+  to: '/' | '/reset-password' | '/api/public/payhero-callback'
+  id: '__root__' | '/' | '/reset-password' | '/api/public/payhero-callback'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  ApiPublicPayheroCallbackRoute: typeof ApiPublicPayheroCallbackRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +76,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/payhero-callback': {
+      id: '/api/public/payhero-callback'
+      path: '/api/public/payhero-callback'
+      fullPath: '/api/public/payhero-callback'
+      preLoaderRoute: typeof ApiPublicPayheroCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  ApiPublicPayheroCallbackRoute: ApiPublicPayheroCallbackRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
