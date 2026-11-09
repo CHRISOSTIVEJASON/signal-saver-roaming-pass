@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { GlobalRelay, type NativeState } from '@/lib/native-relay';
-import { KEYS, defaultDevice, read, write, useStored, type Session, type Network, type Device } from '@/lib/store';
+import { KEYS, defaultDevice, read, write, useStored, useBeepAlerts, type Session, type Network, type Device } from '@/lib/store';
 import { saveShared } from '@/lib/cloud-cache';
 import { connectionState } from '@/lib/rules';
 
@@ -10,6 +10,9 @@ export function NativeBridge() {
   const [networks] = useStored<Network[]>(KEYS.networks, []);
   const sessionRef = useRef(sessions);
   const poolRef = useRef(networks);
+  const [beepAlerts] = useBeepAlerts();
+  const beepRef = useRef(beepAlerts);
+  beepRef.current = beepAlerts;
   sessionRef.current = sessions;
   poolRef.current = networks;
 
@@ -53,7 +56,7 @@ export function NativeBridge() {
       const hasActivePass = sessionRef.current.some((s) => s.remainingMs > 0);
       const poolSsids = poolRef.current.map((n) => n.ssid).filter(Boolean);
       const poolBssids = poolRef.current.map((n) => n.bssid).filter(Boolean);
-      void GlobalRelay.syncWatcherConfig({ poolSsids, poolBssids, hasActivePass }).catch(() => {});
+      void GlobalRelay.syncWatcherConfig({ poolSsids, poolBssids, hasActivePass, soundAlerts: beepRef.current }).catch(() => {});
     };
 
     const check = () => {
@@ -90,7 +93,7 @@ export function NativeBridge() {
     const hasActivePass = sessions.some((s) => s.remainingMs > 0);
     const poolSsids = networks.map((n) => n.ssid).filter(Boolean);
     const poolBssids = networks.map((n) => n.bssid).filter(Boolean);
-    void GlobalRelay.syncWatcherConfig({ poolSsids, poolBssids, hasActivePass }).catch(() => {});
+    void GlobalRelay.syncWatcherConfig({ poolSsids, poolBssids, hasActivePass, soundAlerts: beepRef.current }).catch(() => {});
   }, [sessions, networks]);
 
   return null;

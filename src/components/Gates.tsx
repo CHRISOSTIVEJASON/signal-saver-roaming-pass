@@ -93,6 +93,7 @@ export function UpdateGate() {
   const [cfg] = useConfig();
   const [runningVer] = useAppVersion();
   const [status, setStatus] = useState<string | null>(null);
+  const targetUrl = cfg.apkUrl?.trim() || "https://github.com/CHRISOSTIVEJASON/signal-saver-roaming-pass/releases/download/latest-apk/app-debug.apk";
   const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [completed, setCompleted] = useState<boolean>(false);
@@ -116,8 +117,6 @@ export function UpdateGate() {
     setProgress(10);
     setCompleted(false);
 
-    const targetUrl = cfg.apkUrl?.trim() || "https://github.com/CHRISOSTIVEJASON/signal-saver-roaming-pass/releases/download/latest-apk/app-debug.apk";
-
     if (Capacitor.isNativePlatform()) {
       try {
         const res = await GlobalRelay.installUpdate({ url: targetUrl });
@@ -126,11 +125,17 @@ export function UpdateGate() {
           setStatus("Update downloaded! Launching Android package installer…");
           setCompleted(true);
           setRunningAppVersion(cfg.latestVersion);
+          return;
         }
       } catch (err: any) {
-        setError(err?.message || "Failed to download update. Please check internet connection.");
-        setStatus(null);
-        setProgress(0);
+        console.warn("Native installUpdate unavailable on installed binary, falling back to direct APK download:", err);
+        // Automatic graceful fallback for older installed binaries without installUpdate
+        openApk(targetUrl);
+        setProgress(100);
+        setStatus("Launched APK download in browser…");
+        setCompleted(true);
+        setRunningAppVersion(cfg.latestVersion);
+        return;
       }
     } else {
       // Browser / laptop: download update package directly in-place without redirecting
@@ -192,13 +197,25 @@ export function UpdateGate() {
           </div>
         )}
 
-        <Button
-          onClick={handleUpdate}
-          disabled={Boolean(status && !completed && !error)}
-          className="h-12 w-full rounded-xl bg-accent font-semibold text-accent-foreground hover:brightness-110 disabled:opacity-70"
-        >
-          {completed ? "Re-launch Installer" : status ? (progress >= 100 ? "Installing…" : `Updating… ${progress}%`) : error ? "Retry Update" : "Update Now"}
-        </Button>
+        <div className="space-y-2">
+          <Button
+            onClick={handleUpdate}
+            disabled={Boolean(status && !completed && !error)}
+            className="h-12 w-full rounded-xl bg-accent font-semibold text-accent-foreground hover:brightness-110 disabled:opacity-70"
+          >
+            {completed ? "Re-launch Installer" : status ? (progress >= 100 ? "Installing…" : `Updating… ${progress}%`) : error ? "Retry In-App Update" : "Update Now"}
+          </Button>
+          {(error || !completed) && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => openApk(targetUrl)}
+              className="h-11 w-full rounded-xl border border-border text-xs font-medium hover:bg-secondary flex items-center justify-center gap-1.5"
+            >
+              <Download className="h-4 w-4" /> Download APK Directly
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );

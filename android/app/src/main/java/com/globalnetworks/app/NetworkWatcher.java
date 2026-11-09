@@ -52,6 +52,7 @@ public class NetworkWatcher {
     private static final String KEY_HAS_ACTIVE_PASS = "has_active_pass";
     private static final String KEY_LAST_ALERT_TIME = "last_alert_time";
     private static final String KEY_LAST_DETECTED_SSID = "last_detected_ssid";
+    private static final String KEY_BEEP_ALERTS_ENABLED = "beep_alerts_enabled";
 
     public static final long COOLDOWN_MS = 20 * 60 * 1000L; // 20 minutes cooldown
     public static final String NOTIFICATION_CHANNEL_ID = "gn_network_alert";
@@ -180,6 +181,10 @@ public class NetworkWatcher {
     }
 
     public void syncConfig(List<String> ssids, List<String> bssids, boolean hasActivePass) {
+        syncConfig(ssids, bssids, hasActivePass, prefs.getBoolean(KEY_BEEP_ALERTS_ENABLED, true));
+    }
+
+    public void syncConfig(List<String> ssids, List<String> bssids, boolean hasActivePass, boolean soundAlerts) {
         Set<String> cleanSsids = new HashSet<>();
         if (ssids != null) {
             for (String s : ssids) {
@@ -202,6 +207,7 @@ public class NetworkWatcher {
                 .putStringSet(KEY_POOL_SSIDS, cleanSsids)
                 .putStringSet(KEY_POOL_BSSIDS, cleanBssids)
                 .putBoolean(KEY_HAS_ACTIVE_PASS, hasActivePass)
+                .putBoolean(KEY_BEEP_ALERTS_ENABLED, soundAlerts)
                 .apply();
 
         Log.i(TAG, "Config synced: " + cleanSsids.size() + " SSIDs, " + cleanBssids.size() + " BSSIDs, activePass=" + hasActivePass);
@@ -327,8 +333,10 @@ public class NetworkWatcher {
             if (now - lastAlert >= COOLDOWN_MS || lastAlert == 0) {
                 prefs.edit().putLong(KEY_LAST_ALERT_TIME, now).apply();
 
-                // 1. Play unique 3-second tone that beeps 3 times
-                playUniqueThreeBeepTone();
+                // 1. Play unique 3-second tone that beeps 3 times (if sound enabled)
+                if (prefs.getBoolean(KEY_BEEP_ALERTS_ENABLED, true)) {
+                    playUniqueThreeBeepTone();
+                }
 
                 // 2. Post alert notification
                 postNetworkAvailableNotification(ssid);

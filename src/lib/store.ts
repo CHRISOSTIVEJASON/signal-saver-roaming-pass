@@ -66,6 +66,7 @@ export const KEYS = {
   device: "gn_device",
   mesh: "gn_mesh_links",
   appVersion: "gn_app_version",
+  beepAlerts: "gn_beep_alerts",
 };
 
 export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "", latestVersion: "1.0.0", updateRequired: false };
@@ -200,4 +201,26 @@ export function useAppVersion() {
   }, []);
 
   return [ver, update] as const;
+}
+
+export function getBeepAlertsEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const v = localStorage.getItem(KEYS.beepAlerts);
+    if (v !== null) return JSON.parse(v);
+  } catch {}
+  return true;
+}
+
+export function setBeepAlertsEnabled(enabled: boolean) {
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(KEYS.beepAlerts, JSON.stringify(enabled));
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.beepAlerts }));
+    } catch {}
+  }
+}
+
+export function useBeepAlerts() {
+  return useStored<boolean>(KEYS.beepAlerts, true);
 }

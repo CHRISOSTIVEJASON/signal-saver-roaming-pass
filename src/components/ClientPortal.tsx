@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin } from "lucide-react";
+import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState } from "@/lib/rules";
-import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
+import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
 import { startCloudPayment, confirmCloudPayment, restoreCloudPass } from "@/lib/cloud.functions";
@@ -89,6 +89,7 @@ function playWebThreeBeepTone() {
 }
 
 export function triggerNetworkAlertTone() {
+  if (!getBeepAlertsEnabled()) return;
   const last = parseInt(localStorage.getItem(LAST_ALERT_KEY) || "0", 10);
   const now = Date.now();
   if (!shouldAlertNetwork(last, now, ALERT_COOLDOWN_MS)) return;
@@ -114,11 +115,45 @@ export function ClientPortal() {
 function NetworkBadge() {
   const { state, ssid } = useWifiState();
   const [device] = useStored<Device>(KEYS.device, defaultDevice);
-  if (state === "pool")
-    return <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><span className="h-2 w-2 animate-pulse rounded-full bg-primary" />Network Connected • {ssid || "Pool"}</span>;
-  if (device.nearbyPoolDetected)
-    return <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><span className="h-2 w-2 animate-pulse rounded-full bg-primary" />Sensed Nearby • {device.nearbySsid || "Pool"}</span>;
-  return <span className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground"><Search className="h-3.5 w-3.5" />Searching for network…</span>;
+  const [beepAlerts, setBeepAlerts] = useBeepAlerts();
+
+  const toggleSound = () => {
+    const next = !beepAlerts;
+    setBeepAlerts(next);
+    toast.info(next ? "Nearby Wi-Fi sound alert enabled (3 beeps)" : "Nearby Wi-Fi sound alert muted");
+  };
+
+  const badgeContent = state === "pool" ? (
+    <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+      <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+      Network Connected • {ssid || "Pool"}
+    </span>
+  ) : device.nearbyPoolDetected ? (
+    <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+      <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+      Sensed Nearby • {device.nearbySsid || "Pool"}
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground">
+      <Search className="h-3.5 w-3.5" />
+      Searching for network…
+    </span>
+  );
+
+  return (
+    <div className="inline-flex items-center gap-1.5">
+      {badgeContent}
+      <button
+        type="button"
+        onClick={toggleSound}
+        aria-label={beepAlerts ? "Mute alert sound" : "Enable alert sound"}
+        title={beepAlerts ? "Alert sound is ON (tap to mute)" : "Alert sound is MUTED (tap to enable)"}
+        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/60 text-muted-foreground transition hover:text-foreground"
+      >
+        {beepAlerts ? <Volume2 className="h-3.5 w-3.5 text-primary" /> : <VolumeX className="h-3.5 w-3.5 text-muted-foreground/60" />}
+      </button>
+    </div>
+  );
 }
 
 function Purchase({ onActivated }: { onActivated: (s: Session) => void }) {

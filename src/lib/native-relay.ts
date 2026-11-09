@@ -23,7 +23,7 @@ export const GlobalRelay = registerPlugin<{
   getState(): Promise<NativeState>;
   start(options: { active: boolean; upstreamInPool: boolean }): Promise<void>;
   stop(): Promise<void>;
-  syncWatcherConfig(options: { poolSsids: string[]; poolBssids: string[]; hasActivePass: boolean }): Promise<{ success: boolean }>;
+  syncWatcherConfig(options: { poolSsids: string[]; poolBssids: string[]; hasActivePass: boolean; soundAlerts?: boolean }): Promise<{ success: boolean }>;
   playBeepTone(): Promise<{ success: boolean }>;
   submitCaptivePortal(options: { bssid?: string; ssid?: string; loginUrl?: string; portalUrl?: string; fields?: Record<string, string>; voucherCode?: string; phoneNumber?: string }): Promise<{ validated: boolean; success?: boolean; statusCode?: number; message?: string }>;
   installUpdate(options: { url: string }): Promise<{ success: boolean; message?: string }>;

@@ -602,6 +602,7 @@ public class GlobalRelayPlugin extends Plugin {
             JSArray ssidsArray = call.getArray("poolSsids");
             JSArray bssidsArray = call.getArray("poolBssids");
             boolean hasActivePass = call.getBoolean("hasActivePass", false);
+            boolean soundAlerts = call.getBoolean("soundAlerts", call.getBoolean("beepAlertsEnabled", true));
 
             List<String> ssids = new ArrayList<>();
             if (ssidsArray != null) {
@@ -623,7 +624,7 @@ public class GlobalRelayPlugin extends Plugin {
                 }
             }
 
-            NetworkWatcher.getInstance(getContext()).syncConfig(ssids, bssids, hasActivePass);
+            NetworkWatcher.getInstance(getContext()).syncConfig(ssids, bssids, hasActivePass, soundAlerts);
             JSObject res = new JSObject();
             res.put("success", true);
             call.resolve(res);
