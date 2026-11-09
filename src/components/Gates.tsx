@@ -128,13 +128,16 @@ export function UpdateGate() {
           return;
         }
       } catch (err: any) {
-        console.warn("Native installUpdate unavailable on installed binary, falling back to direct APK download:", err);
-        // Automatic graceful fallback for older installed binaries without installUpdate
-        openApk(targetUrl);
-        setProgress(100);
-        setStatus("Launched APK download in browser…");
-        setCompleted(true);
-        setRunningAppVersion(cfg.latestVersion);
+        console.warn("Native installUpdate unavailable or failed:", err);
+        const rawMsg = String(err?.message || err || "");
+        const isOlderBuild = rawMsg.toLowerCase().includes("not implemented");
+        setError(
+          isOlderBuild
+            ? "Automatic in-app update is not supported by your current build. Tap 'Download APK Directly' below, then tap the downloaded file in your notification bar to complete the update."
+            : "In-app update could not complete automatically. Tap 'Download APK Directly' below to update manually."
+        );
+        setStatus(null);
+        setProgress(0);
         return;
       }
     } else {
@@ -192,8 +195,11 @@ export function UpdateGate() {
         )}
 
         {error && (
-          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive text-left">
-            {error}
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive text-left space-y-1.5 shadow-sm">
+            <p className="font-semibold flex items-center gap-1.5 text-destructive">
+              <span>⚠️</span> In-App Update Could Not Finish
+            </p>
+            <p className="text-muted-foreground leading-relaxed text-[11px]">{error}</p>
           </div>
         )}
 
@@ -205,7 +211,7 @@ export function UpdateGate() {
           >
             {completed ? "Re-launch Installer" : status ? (progress >= 100 ? "Installing…" : `Updating… ${progress}%`) : error ? "Retry In-App Update" : "Update Now"}
           </Button>
-          {(error || !completed) && (
+          {Boolean(error) && (
             <Button
               type="button"
               variant="outline"
