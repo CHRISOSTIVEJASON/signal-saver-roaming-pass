@@ -25,9 +25,53 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const [activeOnly, setActiveOnly] = useState(true);
   const [networks] = useStored<Network[]>(KEYS.networks, []);
   const [status] = useServiceStatus();
-  const [settingsDialog, setSettingsDialog] = useState<"service" | "passcode" | "app" | "payhero" | "offers" | "exempted" | "ledger" | null>(null);
+  const [blocked, setBlocked] = useBlockedNumbers();
+  const [settingsDialog, setSettingsDialog] = useState<"service" | "passcode" | "app" | "payhero" | "offers" | "exempted" | "blocked" | "ledger" | null>(null);
   const [now, setNow] = useState(Date.now());
   const fetchCloudRecords = useServerFn(getCloudTransactionsAndSessions);
+  const toggleFreeze = useServerFn(toggleFreezeSession);
+  const saveBlockedList = useServerFn(saveBlockedNumbers);
+  const fetchBlocked = useServerFn(getBlockedNumbers);
+
+  useEffect(() => {
+    fetchBlocked().then((res) => {
+      if (Array.isArray(res)) setBlocked(res);
+    }).catch(() => {});
+  }, [fetchBlocked, setBlocked]);
+
+  async function handleToggleFreeze(sessionId: string, freeze: boolean) {
+    try {
+      await toggleFreeze({ data: { sessionId, frozen: freeze } });
+      setCloudSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, frozen: freeze, online: freeze ? false : s.online } : s))
+      );
+      setLocalSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, frozen: freeze, online: freeze ? false : s.online } : s))
+      );
+      toast.success(freeze ? "❄️ Pass frozen! Internet cut simultaneously." : "✅ Pass unfrozen! Access resumed.");
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to update freeze state");
+    }
+  }
+
+  async function handleQuickBlock(phone: string) {
+    const norm = normalizePhone(phone);
+    if (!norm) return;
+    if (confirm(`Block +${norm} from accessing services and buying passes? This will also freeze active passes.`)) {
+      try {
+        const updated = [...blocked.filter((b) => normalizePhone(b.phone) !== norm), { phone: norm, reason: "Blocked from live roaming", addedAt: Date.now() }];
+        await saveBlockedList({ data: { numbers: updated } });
+        setBlocked(updated);
+        write(KEYS.blockedNumbers, updated);
+        setCloudSessions((prev) =>
+          prev.map((s) => (normalizePhone(s.phone) === norm ? { ...s, frozen: true, online: false } : s))
+        );
+        toast.success(`+${norm} blocked and active pass frozen.`);
+      } catch (err: any) {
+        toast.error(err?.message || "Failed to block user");
+      }
+    }
+  }
 
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
 
@@ -120,10 +164,24 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       {tab === "pool" && <PoolManager />}
       {tab === "roam" && (<>
         <Panel title="Live Clients & Roaming" icon={<Radio className="h-4 w-4" />}>
-          <Table head={["Phone", "Pass", "Time left", "State"]} empty="No active sessions yet."
+          <Table head={["Phone", "Pass", "Time left", "State", "Actions"]} empty="No active sessions yet."
             rows={active.map((s) => [
               `+${s.phone}`, getPass(s.passId).label, <span className="font-mono">{formatClock(s.remainingMs)}</span>,
-              s.online ? <Pill tone="primary">Active</Pill> : <Pill tone="warning">Frozen</Pill>,
+              s.frozen ? <Pill tone="destructive">Frozen by Admin</Pill> : s.online ? <Pill tone="primary">Active</Pill> : <Pill tone="warning">Searching</Pill>,
+              <div className="flex items-center gap-1.5" key={s.id}>
+                {s.frozen ? (
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-primary border-primary/40 hover:bg-primary/10" onClick={() => handleToggleFreeze(s.id, false)}>
+                    <Play className="mr-1 h-3 w-3" /> Unfreeze
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-warning border-warning/40 hover:bg-warning/10" onClick={() => handleToggleFreeze(s.id, true)}>
+                    <Snowflake className="mr-1 h-3 w-3" /> Freeze
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10" onClick={() => handleQuickBlock(s.phone)}>
+                  <Ban className="mr-1 h-3 w-3" /> Block
+                </Button>
+              </div>,
             ])} />
         </Panel>
         <RelayMonitor />
@@ -131,10 +189,11 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       {tab === "pay" && (
         <div className="space-y-3">
           <p className="px-1 text-xs text-muted-foreground">Choose an action to open its focused settings dialog.</p>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             <AdminAction icon={<Wallet className="h-5 w-5" />} label="PayHero / M-Pesa" detail="Gateway and payment mode" onClick={() => setSettingsDialog("payhero")} />
             <AdminAction icon={<Tag className="h-5 w-5" />} label="Pass Packages" detail="Pricing and durations" onClick={() => setSettingsDialog("offers")} />
             <AdminAction icon={<PhoneCall className="h-5 w-5" />} label="VIP Exemptions" detail="Free-access phone list" onClick={() => setSettingsDialog("exempted")} />
+            <AdminAction icon={<Ban className="h-5 w-5" />} label="Blocked Users" detail={`${blocked.length} numbers blocked`} onClick={() => setSettingsDialog("blocked")} tone={blocked.length > 0 ? "danger" : "default"} />
             <AdminAction icon={<Database className="h-5 w-5" />} label="Transaction Ledger" detail={`${displayTxns.length} records`} onClick={() => setSettingsDialog("ledger")} />
           </div>
         </div>
@@ -184,6 +243,12 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
         <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader><DialogTitle>VIP Exemptions</DialogTitle><DialogDescription>Manage phone numbers that receive free access.</DialogDescription></DialogHeader>
           <ExemptedNumbersCard />
+        </DialogContent>
+      </Dialog>
+      <Dialog open={settingsDialog === "blocked"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader><DialogTitle>Blocked Phone Numbers</DialogTitle><DialogDescription>Manage phone numbers blocked from purchasing passes or using services.</DialogDescription></DialogHeader>
+          <BlockedNumbersCard />
         </DialogContent>
       </Dialog>
       <Dialog open={settingsDialog === "ledger"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
@@ -1237,5 +1302,112 @@ function RelayMonitor() {
           <span className="font-mono text-xs">{e.peer}</span>, e.via, `${e.kb} KB`,
         ])} />
     </Panel>
+  );
+}
+
+
+function BlockedNumbersCard() {
+  const [blocked, setBlocked] = useBlockedNumbers();
+  const [newPhone, setNewPhone] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const saveBlockedList = useServerFn(saveBlockedNumbers);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    const normalized = normalizePhone(newPhone);
+    if (!normalized || normalized.length < 9) {
+      toast.error("Please enter a valid phone number (e.g. 0712345678)");
+      return;
+    }
+    if (blocked.some((b) => normalizePhone(b.phone) === normalized)) {
+      toast.error("This phone number is already blocked");
+      return;
+    }
+    setSaving(true);
+    const updated: BlockedNumber[] = [
+      ...blocked,
+      { phone: normalized, reason: reason.trim() || "Blocked by administrator", addedAt: Date.now() },
+    ];
+    try {
+      await saveBlockedList({ data: { numbers: updated } });
+      setBlocked(updated);
+      write(KEYS.blockedNumbers, updated);
+      setNewPhone("");
+      setReason("");
+      toast.success(`+${normalized} has been blocked and active sessions frozen.`);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to save blocked number to cloud");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemove(phone: string) {
+    const updated = blocked.filter((b) => b.phone !== phone);
+    try {
+      await saveBlockedList({ data: { numbers: updated } });
+      setBlocked(updated);
+      write(KEYS.blockedNumbers, updated);
+      toast.success(`Unblocked +${phone}. Services restored.`);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to update blocked numbers list");
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Panel title="Block a Phone Number" icon={<Ban className="h-4 w-4 text-destructive" />}>
+        <form onSubmit={handleAdd} className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Phone Number</label>
+              <input
+                type="tel"
+                value={newPhone}
+                onChange={(e) => setNewPhone(e.target.value)}
+                placeholder="0712345678"
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-destructive focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Reason (Optional)</label>
+              <input
+                type="text"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="Misuse / Payment fraud"
+                className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-1.5 text-xs focus:border-destructive focus:outline-none"
+              />
+            </div>
+          </div>
+          <Button type="submit" disabled={saving} variant="destructive" className="h-8 w-full text-xs">
+            {saving ? "Saving..." : "Block Phone Number (Cut Access & Disable Pay)"}
+          </Button>
+        </form>
+      </Panel>
+
+      <Panel title={`Currently Blocked (${blocked.length})`} icon={<ShieldAlert className="h-4 w-4" />}>
+        <Table
+          head={["Phone Number", "Reason", "Blocked Date", "Action"]}
+          empty="No numbers currently blocked. All users can access services."
+          rows={blocked.map((item) => [
+            <span className="font-mono font-semibold text-destructive">+{item.phone}</span>,
+            item.reason || "—",
+            new Date(item.addedAt).toLocaleDateString(),
+            <Button
+              key={item.phone}
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs text-primary border-primary/40 hover:bg-primary/10"
+              onClick={() => handleRemove(item.phone)}
+            >
+              Unblock
+            </Button>,
+          ])}
+        />
+      </Panel>
+    </div>
   );
 }

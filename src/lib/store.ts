@@ -48,6 +48,8 @@ export type Session = {
   isCompanion?: boolean;
   pairedCompanionId?: string | null;
   companionPin?: string;
+  frozen?: boolean;
+  frozenAt?: number;
 };
 export type Txn = {
   id: string;
@@ -70,6 +72,12 @@ export const defaultServiceStatus: ServiceStatus = {
   resumeDate: "",
 };
 
+export type BlockedNumber = {
+  phone: string;
+  reason?: string;
+  addedAt: number;
+};
+
 export type ExemptedNumber = {
   phone: string;
   note?: string;
@@ -90,6 +98,7 @@ export const KEYS = {
   beepAlerts: "gn_beep_alerts",
   serviceStatus: "gn_service_status",
   exemptedNumbers: "gn_exempted_numbers",
+  blockedNumbers: "gn_blocked_numbers",
   offers: "gn_offers",
 };
 
@@ -267,4 +276,8 @@ export function useExemptedNumbers() {
 
 export function useOffers() {
   return useStored<PassOffer[]>(KEYS.offers, [..._DP]);
+}
+
+export function useBlockedNumbers() {
+  return useStored<BlockedNumber[]>(KEYS.blockedNumbers, []);
 }

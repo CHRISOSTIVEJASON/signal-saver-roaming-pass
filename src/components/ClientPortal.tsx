@@ -5,7 +5,7 @@ import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, sh
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, useServiceStatus, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
-import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass } from "@/lib/cloud.functions";
+import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession } from "@/lib/cloud.functions";
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
@@ -696,23 +696,67 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
   const [service] = useServiceStatus();
   const suspended = !service.active;
   const connecting = Capacitor.isNativePlatform() && state === "pool" && !direct && (!deviceState.captive?.ready || deviceState.captive.bssid !== deviceState.currentWifi?.bssid);
+  const isFrozen = Boolean(session.frozen);
 
   const update = (patch: (s: Session) => Partial<Session>) =>
     setSessions((p) => p.map((s) => (s.id === ref.current.id ? { ...s, ...patch(s) } : s)));
 
+  const heartbeat = useServerFn(heartbeatSession);
+
+  // Synchronize freeze/active status with cloud backend in real-time
+  useEffect(() => {
+    let mounted = true;
+    const syncStatus = async () => {
+      try {
+        const res = await heartbeat({
+          data: {
+            id: session.id,
+            bssid: deviceState.currentWifi?.bssid ?? null,
+            relayReady: direct,
+            deviceId: getDeviceId()
+          }
+        });
+        if (res && mounted) {
+          const frozen = Boolean((res as any).frozen);
+          update((s) => ({
+            ...s,
+            frozen,
+            remainingMs: frozen ? s.remainingMs : ((res as any).remainingMs ?? s.remainingMs),
+            online: frozen ? false : Boolean((res as any).online)
+          }));
+          if (frozen && Capacitor.isNativePlatform()) {
+            void GlobalRelay.stop().catch(() => {});
+          }
+        }
+      } catch {}
+    };
+    syncStatus();
+    const interval = setInterval(syncStatus, 5000);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [session.id, deviceState.currentWifi?.bssid, direct]);
+
   useEffect(() => {
     const step = () => {
       const now = Date.now();
-      const running = state === "pool" && !connecting && !suspended;
+      const currentFrozen = Boolean(ref.current.frozen || session.frozen);
+      const running = state === "pool" && !connecting && !suspended && !currentFrozen;
       // Cap each step so time spent closed, suspended or offline is never charged.
-      update((s) => ({ remainingMs: tick(s.remainingMs, s.lastTick, Math.min(now, s.lastTick + 5_000), running), lastTick: now, online: running }));
-      if (ref.current.online) recordRelayTick(ref.current.phone);
+      update((s) => ({
+        remainingMs: tick(s.remainingMs, s.lastTick, Math.min(now, s.lastTick + 5_000), running),
+        lastTick: now,
+        online: running,
+        frozen: currentFrozen
+      }));
+      if (ref.current.online && !currentFrozen) recordRelayTick(ref.current.phone);
       force((n) => n + 1);
     };
     step();
     const t = setInterval(step, 1000);
     return () => clearInterval(t);
-  }, [session.id, state, connecting, suspended]);
+  }, [session.id, state, connecting, suspended, isFrozen]);
 
   const [offers] = useOffers();
   const remainingMs = tick(session.remainingMs, session.lastTick, Math.min(Date.now(), session.lastTick + 30_000), session.online);
@@ -722,6 +766,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
   return (
     <div className="space-y-5 text-center">
       <CaptiveLogin sessionId={session.id} />
+      {isFrozen && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-destructive/40 bg-destructive/15 px-3 py-1.5 text-xs font-medium text-destructive"><Snowflake className="h-3.5 w-3.5 shrink-0" />Pass Frozen by Admin — Internet access is paused and time is preserved</span>}
       {suspended && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5 shrink-0" />Service paused — your time is frozen{service.resumeDate ? ` until ${service.resumeDate}` : ""}</span>}
       {connecting && <span className="inline-flex items-center gap-2 text-sm text-warning"><Loader2 className="h-4 w-4 animate-spin" />Connecting — your time is preserved</span>}
       {direct && <span className="inline-flex items-center justify-center gap-2 text-sm text-primary"><Signal className="h-5 w-5 shrink-0" />Connected to GLOBAL NETWORKS (High-Speed Direct Relay)</span>}

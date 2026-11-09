@@ -90,6 +90,24 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
     } catch {}
     const pass = getPass(data.passId, customOffers);
 
+    // Check if phone number is blocked from services
+    let blockedList: Array<{ phone: string }> = [];
+    try {
+      const { data: blockedRecord } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_blocked_numbers__').maybeSingle();
+      if (blockedRecord?.api_token) {
+        const parsed = JSON.parse(blockedRecord.api_token);
+        if (Array.isArray(parsed)) blockedList = parsed;
+      }
+    } catch {}
+    const isBlocked = blockedList.some((b) => {
+      const bp = normalizePhone(b.phone);
+      return bp && bp === phone;
+    });
+    if (isBlocked) {
+      throw new Error('This phone number has been blocked from accessing services by admin.');
+    }
+
+
     // Check if phone number is exempted from payment
     let exemptedList: Array<{ phone: string }> = [];
     try {
@@ -393,6 +411,17 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
     const inputPin = data.pin.trim();
     if (!inputPin) throw new Error('Enter the 6-digit companion PIN shown on the host device');
 
+    const { data: blockedRecord } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_blocked_numbers__').maybeSingle();
+    let isBlocked = false;
+    try {
+      const blocked = blockedRecord?.api_token ? JSON.parse(blockedRecord.api_token) : [];
+      isBlocked = Array.isArray(blocked) && blocked.some((b: any) => normalizePhone(b?.phone || '') === phone);
+    } catch {}
+    if (isBlocked) {
+      throw new Error('This phone number has been blocked from accessing services by admin.');
+    }
+
+
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
 
     const { data: rows, error } = await supabaseAdmin.from('gn_sessions').select('*').order('updated_at', { ascending: false });
@@ -502,7 +531,16 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     let serviceActive = true;
     try { serviceActive = svc?.api_token ? JSON.parse(svc.api_token).active !== false : true; } catch {}
     const now = Date.now();
-    const updated = { ...session, remainingMs: tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), session.online), lastTick: now, online: online && serviceActive };
+    const isFrozen = Boolean(session.frozen);
+    const updated = {
+      ...session,
+      remainingMs: isFrozen
+        ? session.remainingMs
+        : tick(session.remainingMs, session.lastTick, Math.min(now, session.lastTick + 30_000), session.online),
+      lastTick: now,
+      online: !isFrozen && online && serviceActive,
+      frozen: isFrozen
+    };
     await supabaseAdmin.from('gn_sessions').update({
       payload: JSON.parse(JSON.stringify(updated)),
       updated_at: new Date(now).toISOString()
@@ -779,4 +817,86 @@ export const saveCloudOffers = createServerFn({ method: 'POST' })
     });
     if (error) throw new Error('Failed to save offers: ' + error.message);
     return { ok: true, offers: data.offers };
+  });
+
+
+export const getBlockedNumbers = createServerFn({ method: 'POST' })
+  .validator((input?: Record<string, unknown>) => input ?? {})
+  .handler(async () => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      const { data } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_blocked_numbers__').maybeSingle();
+      if (data?.api_token) {
+        const parsed = JSON.parse(data.api_token);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Unable to load blocked numbers:', e);
+    }
+    return [];
+  });
+
+export const saveBlockedNumbers = createServerFn({ method: 'POST' })
+  .validator((input: { numbers: Array<{ phone: string; reason?: string; addedAt: number }> }) => z.object({
+    numbers: z.array(z.object({
+      phone: z.string(),
+      reason: z.string().optional(),
+      addedAt: z.number()
+    }))
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { error } = await supabaseAdmin.from('gn_payment_credentials').upsert({
+      id: '__gn_blocked_numbers__',
+      api_token: JSON.stringify(data.numbers),
+      channel_id: '',
+      password: '',
+      username: ''
+    });
+    if (error) throw new Error('Failed to save blocked numbers: ' + error.message);
+
+    // Also freeze any active sessions for all blocked numbers immediately
+    const blockedPhones = new Set(data.numbers.map((n) => normalizePhone(n.phone)));
+    const { data: rows } = await supabaseAdmin.from('gn_sessions').select('*');
+    for (const r of rows || []) {
+      const p = r.payload as any;
+      if (p && blockedPhones.has(normalizePhone(p.phone || '')) && !p.frozen) {
+        p.frozen = true;
+        p.online = false;
+        p.frozenAt = Date.now();
+        await supabaseAdmin.from('gn_sessions').update({
+          payload: JSON.parse(JSON.stringify(p)),
+          updated_at: new Date().toISOString()
+        }).eq('id', r.id);
+      }
+    }
+
+    return { ok: true, numbers: data.numbers };
+  });
+
+export const toggleFreezeSession = createServerFn({ method: 'POST' })
+  .validator((input: { sessionId: string; frozen: boolean }) => z.object({
+    sessionId: z.string(),
+    frozen: z.boolean()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.sessionId).maybeSingle();
+    if (!row) throw new Error('Session not found');
+    const payload = (row.payload || {}) as any;
+    payload.frozen = data.frozen;
+    if (data.frozen) {
+      payload.online = false;
+      payload.frozenAt = Date.now();
+    } else {
+      delete payload.frozenAt;
+      payload.lastTick = Date.now();
+      payload.online = true;
+    }
+    const { error } = await supabaseAdmin.from('gn_sessions').update({
+      payload: JSON.parse(JSON.stringify(payload)),
+      updated_at: new Date().toISOString()
+    }).eq('id', data.sessionId);
+    if (error) throw new Error('Failed to update session freeze state: ' + error.message);
+    return { ok: true, frozen: data.frozen, session: payload };
   });
