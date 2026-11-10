@@ -23,7 +23,13 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
           const { data: rows } = await supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(300);
           const row = (rows || []).find((t) => {
             const p = t.payload as any;
-            return p && (refs.includes(p.ref) || refs.includes(p.externalRef) || refs.includes(p.id));
+            return p && (
+              refs.includes(p.ref) ||
+              refs.includes(p.externalRef) ||
+              refs.includes(p.id) ||
+              refs.includes(p.checkoutRequestId) ||
+              (p.accountNumber && refs.some((r: string) => p.accountNumber.includes(r)))
+            );
           });
           if (row) {
             try {

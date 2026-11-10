@@ -77,7 +77,13 @@ export async function confirmTxn(db: Admin, row: { id: string; user_id: string; 
   const txn = row.payload as Txn;
   if (txn.status === 'Failed') throw new Error('Payment was cancelled or failed');
   if (txn.mode === 'Live' && txn.status !== 'Activated') {
-    const st = await payHeroStatus(db, txn.ref);
+    let st = await payHeroStatus(db, txn.ref);
+    if (st === 'pending' && (txn as any).externalRef && (txn as any).externalRef !== txn.ref) {
+      st = await payHeroStatus(db, (txn as any).externalRef);
+    }
+    if (st === 'pending' && (txn as any).checkoutRequestId && (txn as any).checkoutRequestId !== txn.ref) {
+      st = await payHeroStatus(db, (txn as any).checkoutRequestId);
+    }
     if (st === 'failed') {
       await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Failed' }) }).eq('id', txn.id);
       throw new Error('Payment was cancelled or declined on your phone');

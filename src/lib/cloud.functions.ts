@@ -1291,3 +1291,105 @@ export const verifyManualPaymentReceipt = createServerFn({ method: 'POST' })
 
     return { ok: true, session, amount, hours: duration.hours };
   });
+
+/**
+ * Option 2: Dynamic Offline Paybill (Fully Automated in your App)
+ * Calls FinoQ / PayHero:
+ * POST /api/v2/payments with { provider: 'sasapay', network_code: '63902', is_offline: true, external_reference: ... }
+ * Returns dynamic account: 553125#<CheckoutRequestID> on Paybill 756756.
+ * When paid, FinoQ settles funds into merchant wallet float and triggers automated webhook to confirm pass.
+ */
+export const generateDynamicPaybillTicket = createServerFn({ method: 'POST' })
+  .validator((input: { phone: string; passId: string; deviceId?: string }) => z.object({
+    phone: z.string(),
+    passId: z.string(),
+    deviceId: z.string().optional()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const phone = normalizePhone(data.phone);
+    if (!phone) throw new Error('Enter a valid M-Pesa number');
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+
+    let customOffers: PassOffer[] = [...DEFAULT_PASSES];
+    try {
+      const { data: offersRecord } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_offers__').maybeSingle();
+      if (offersRecord?.api_token) {
+        const parsed = JSON.parse(offersRecord.api_token);
+        if (Array.isArray(parsed) && parsed.length > 0) customOffers = parsed;
+      }
+    } catch {}
+    const pass = getPass(data.passId, customOffers);
+
+    const { data: creds } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
+    const live = Boolean(creds && creds.api_token);
+
+    const id = crypto.randomUUID();
+    const externalRef = `GN-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`.toUpperCase();
+    let checkoutId = '';
+
+    if (live && creds) {
+      const authorization = getPayHeroAuthHeader(creds);
+      const paymentBody: Record<string, unknown> = {
+        amount: pass.amount,
+        phone_number: phone,
+        provider: 'sasapay',
+        network_code: '63902',
+        is_offline: true,
+        external_reference: externalRef,
+        callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback',
+      };
+
+      try {
+        const response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authorization },
+          body: JSON.stringify(paymentBody)
+        });
+        const result = (await response.json().catch(() => ({}))) as any;
+        checkoutId = String(
+          result?.CheckoutRequestID ??
+          result?.response?.CheckoutRequestID ??
+          result?.data?.CheckoutRequestID ??
+          result?.reference ??
+          result?.data?.reference ??
+          ''
+        ).trim();
+      } catch (e) {
+        console.warn('PayHero dynamic offline paybill ticket error:', e);
+      }
+    }
+
+    const ticketNumber = checkoutId || externalRef.slice(-5);
+    const dynamicAccount = `553125#${ticketNumber}`;
+
+    const txn: Txn = {
+      id,
+      ref: checkoutId || externalRef,
+      phone,
+      amount: pass.amount,
+      passId: pass.id,
+      at: Date.now(),
+      status: 'Pending',
+      mode: live ? 'Live' : 'Demo'
+    };
+    (txn as any).externalRef = externalRef;
+    (txn as any).checkoutRequestId = checkoutId;
+    (txn as any).accountNumber = dynamicAccount;
+    (txn as any).isDynamicPaybill = true;
+
+    await supabaseAdmin.from('gn_transactions').insert({
+      id,
+      user_id: id,
+      payload: JSON.parse(JSON.stringify(txn))
+    });
+
+    return {
+      paybill: '756756',
+      accountNumber: dynamicAccount,
+      ticketNumber,
+      externalReference: externalRef,
+      checkoutRequestId: checkoutId,
+      amount: pass.amount,
+      txnId: id
+    };
+  });

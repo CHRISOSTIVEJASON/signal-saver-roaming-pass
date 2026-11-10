@@ -6,7 +6,7 @@ import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, sh
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, useServiceStatus, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
-import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession, listenForBackgroundPayment, verifyManualPaymentReceipt } from "@/lib/cloud.functions";
+import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession, listenForBackgroundPayment, verifyManualPaymentReceipt, generateDynamicPaybillTicket } from "@/lib/cloud.functions";
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
@@ -211,10 +211,40 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const pairCompanion = useServerFn(pairCompanionPass);
   const checkBackgroundPayment = useServerFn(listenForBackgroundPayment);
   const verifyReceipt = useServerFn(verifyManualPaymentReceipt);
+  const getDynamicTicket = useServerFn(generateDynamicPaybillTicket);
 
   const [manualReceipt, setManualReceipt] = useState("");
   const [manualVerifying, setManualVerifying] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [dynamicAccount, setDynamicAccount] = useState<string>(MANUAL_ACCOUNT);
+  const [ticketId, setTicketId] = useState<string>("13205");
+  const [ticketLoading, setTicketLoading] = useState(false);
+
+  const fetchDynamicAccount = async (targetPhone: string, targetPassId: string) => {
+    const msisdn = normalizePhone(targetPhone);
+    if (!msisdn) return;
+    setTicketLoading(true);
+    try {
+      const res = await getDynamicTicket({ data: { phone: msisdn, passId: targetPassId, deviceId: getDeviceId() } });
+      if (res?.accountNumber) {
+        setDynamicAccount(res.accountNumber);
+        setTicketId(res.ticketNumber || "");
+      }
+    } catch {
+      // Keep static fallback
+    } finally {
+      setTicketLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const msisdn = normalizePhone(phone);
+    if (!msisdn || msisdn.length < 9) return;
+    const timer = setTimeout(() => {
+      void fetchDynamicAccount(msisdn, pass.id);
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [phone, pass.id]);
 
   const copyManualField = (val: string, label: string) => {
     navigator.clipboard?.writeText(val);
@@ -619,15 +649,16 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
 
-        {/* Manual Lipa na M-Pesa Paybill Option (Independent Flow) */}
+        {/* Option 2: Dynamic Offline Paybill (Fully Automated via FinoQ / PayHero) */}
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-left space-y-2.5">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
               <CreditCard className="h-3.5 w-3.5 text-primary" />
-              Pay via Paybill (Instant Detection)
+              Dynamic Paybill (Option 2 Automated)
             </span>
-            <span className="text-[10px] rounded bg-primary/10 px-1.5 py-0.5 text-primary font-mono font-medium">
-              Sharp Listener Active
+            <span className="text-[10px] rounded bg-primary/10 px-1.5 py-0.5 text-primary font-mono font-medium flex items-center gap-1">
+              {ticketLoading ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
+              Ticket #{ticketId}
             </span>
           </div>
 
@@ -649,15 +680,26 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
             </div>
 
             <div className="rounded-lg border border-border bg-background/80 p-2">
-              <span className="block text-[10px] text-muted-foreground uppercase font-sans">Account Number</span>
+              <div className="flex items-center justify-between">
+                <span className="block text-[10px] text-muted-foreground uppercase font-sans">Account Number</span>
+                <button
+                  type="button"
+                  onClick={() => fetchDynamicAccount(phone, pass.id)}
+                  disabled={ticketLoading || !normalizePhone(phone)}
+                  className="text-[10px] text-primary hover:underline disabled:opacity-50"
+                  title="Generate new CheckoutRequestID"
+                >
+                  {ticketLoading ? "Generating..." : "Refresh #"}
+                </button>
+              </div>
               <div className="flex items-center justify-between mt-1">
-                <span className="font-bold text-foreground text-sm tracking-wide truncate">{MANUAL_ACCOUNT}</span>
+                <span className="font-bold text-foreground text-sm tracking-wide truncate">{dynamicAccount}</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => copyManualField(MANUAL_ACCOUNT, "Account Number")}
+                  onClick={() => copyManualField(dynamicAccount, "Account Number")}
                 >
                   {copiedField === "Account Number" ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
                 </Button>
@@ -666,7 +708,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           </div>
 
           <p className="text-[11px] text-muted-foreground leading-tight">
-            Pay any amount from KES 10. Extra amounts receive proportional time rounded to the second. Background listener connects you automatically!
+            Pay KES {pass.amount} (or any amount &ge;10) to Paybill <strong>{MANUAL_PAYBILL}</strong> with Account <strong>{dynamicAccount}</strong>. Funds settle into your FinoQ wallet float, and FinoQ confirms ticket #{ticketId} to unlock internet automatically!
           </p>
 
           <form onSubmit={handleVerifyReceipt} className="flex gap-1.5 pt-1">
