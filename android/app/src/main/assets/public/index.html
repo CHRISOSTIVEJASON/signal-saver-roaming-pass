@@ -233,7 +233,7 @@
     </div>
 
     <!-- Connectivity Banner (Hidden when normal online) -->
-    <div id="netBanner" class="net-banner offline">
+    <div id="netBanner" class="net-banner offline" style="display: none;">
       <span style="font-size: 16px;">⚠️</span>
       <div>
         <strong>Hotspot Offline or Pending Pass</strong><br>
@@ -344,6 +344,28 @@
       return null;
     }
 
+    
+    function showToast(msg) {
+      const t = document.createElement('div');
+      t.style.position = 'fixed';
+      t.style.top = '16px';
+      t.style.left = '50%';
+      t.style.transform = 'translateX(-50%)';
+      t.style.background = '#dc2626';
+      t.style.color = '#ffffff';
+      t.style.padding = '10px 16px';
+      t.style.borderRadius = '12px';
+      t.style.fontSize = '12px';
+      t.style.fontWeight = '600';
+      t.style.zIndex = '99999';
+      t.style.boxShadow = '0 8px 24px rgba(0,0,0,0.6)';
+      t.style.textAlign = 'center';
+      t.style.maxWidth = '90vw';
+      t.innerText = msg;
+      document.body.appendChild(t);
+      setTimeout(() => { t.remove(); }, 3000);
+    }
+
     function handlePayClick() {
       const phoneInput = document.getElementById('phone').value;
       const normalized = normalizePhone(phoneInput);
@@ -353,9 +375,9 @@
       }
       localStorage.setItem('gn_phone', normalized);
 
-      // If offline, display procedural 2-step modal
+      // If offline / data is off, show top toast for 3 seconds:
       if (!navigator.onLine) {
-        document.getElementById('stepModal').style.display = 'flex';
+        showToast('Kindly turn on data to collect the smallest kb to push the stk');
         return;
       }
 

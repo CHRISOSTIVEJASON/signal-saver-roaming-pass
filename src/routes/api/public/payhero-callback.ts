@@ -33,7 +33,8 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
           });
           if (row) {
             try {
-              await confirmTxn(supabaseAdmin, row);
+              const p = row.payload as any;
+              await confirmTxn(supabaseAdmin, row, p?.deviceId);
               return new Response('ok');
             } catch (e) {
               console.warn('payhero callback existing txn confirmation error:', e);
@@ -105,12 +106,23 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
               },
             });
 
+            // Attempt to bind to device that recently attempted payment or queried for this phone
+            let boundDeviceId: string | null = null;
+            try {
+              const { data: recentRows } = await supabaseAdmin.from('gn_transactions').select('payload').order('created_at', { ascending: false }).limit(50);
+              const matched = (recentRows || []).find((t: any) => {
+                const p = t?.payload;
+                return p && normalizePhone(p.phone || '') === phone && p.deviceId;
+              });
+              if (matched) boundDeviceId = (matched.payload as any).deviceId;
+            } catch {}
+
             await supabaseAdmin.from('gn_sessions').upsert({
               id: txnId,
               user_id: txnId,
               payload: {
                 ...session,
-                bound_device_id: null,
+                bound_device_id: boundDeviceId,
                 companion_pin: companionPin,
                 paired_companion_id: null,
               },

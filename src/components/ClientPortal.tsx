@@ -362,14 +362,16 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
       return;
     }
 
-    // Smart check: If offline or captive hotspot without WAN, open procedural Paybill fallback
+    // If offline / data is off, show the 3-second top toast popup:
     if (!navigator.onLine) {
-      void fetchDynamicAccount(msisdn, pass.id);
-      setPaybillFallbackOpen(true);
+      toast.error("Kindly turn on data to collect the smallest kb to push the stk", {
+        duration: 3000,
+        position: "top-center",
+      });
       return;
     }
 
-    // When online, proceed straight to pay without showing mobile data reminder
+    // When data is turned on, proceed directly to pay
     await pay();
   }
 
@@ -488,7 +490,10 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
       const msg = String(e instanceof Error ? e.message : e || "");
       void fetchDynamicAccount(msisdn, pass.id);
       setPaybillFallbackOpen(true);
-      toast.error(msg || "Failed to push STK prompt");
+      toast.error(msg || "Could not push STK. Redirecting to Paybill...", {
+        duration: 3000,
+        position: "top-center",
+      });
     } finally {
       setBusy(null);
     }
@@ -613,35 +618,14 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           <input id="phone" aria-label="M-Pesa phone number" inputMode="tel" placeholder="M-Pesa number 07XX XXX XXX" value={phone} onChange={(e) => setPhone(e.target.value)}
             className="h-12 w-full bg-transparent font-mono text-base outline-none" disabled={!!busy} />
         </div>
-        {!isOnline && (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-400">
-            <WifiOff className="h-4 w-4 shrink-0 text-amber-400" />
-            <span className="leading-snug">Hotspot offline or pending pass. Turn on Mobile Data (no bundles needed) to receive your STK PIN prompt.</span>
-          </div>
-        )}
+
         <Button onClick={handlePayClick} disabled={!!busy}
           className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-70">
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
 
-        <div className="text-center pt-0.5">
-          <button
-            type="button"
-            onClick={() => {
-              const msisdn = normalizePhone(phone);
-              if (!msisdn) {
-                toast.error("Please enter your M-Pesa phone number above first");
-                return;
-              }
-              void fetchDynamicAccount(msisdn, pass.id);
-              setPaybillFallbackOpen(true);
-            }}
-            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4"
-          >
-            Having trouble receiving STK? Pay via Paybill
-          </button>
-        </div>
+
         <div className="grid grid-cols-1 gap-2 pt-2 min-[380px]:grid-cols-2">
           <Button
             variant="outline"

@@ -3,7 +3,8 @@ import { useServerFn } from '@tanstack/react-start';
 import { supabase } from '@/integrations/supabase/client';
 import { publishCache, clearPrivateCache, registerCloudSaver } from '@/lib/cloud-cache';
 import { defaultConfig, KEYS, read, type Session, type Txn, type Network, type PayConfig } from '@/lib/store';
-import { savePaymentConfig, syncCloudNetworks, getCloudNetworks, getServiceStatus, getExemptedNumbers, getCloudOffers } from '@/lib/cloud.functions';
+import { savePaymentConfig, syncCloudNetworks, getCloudNetworks, getServiceStatus, getExemptedNumbers, getCloudOffers, getPoolNetworkPasswords } from '@/lib/cloud.functions';
+import { getDeviceId } from '@/lib/store';
 import { write, defaultServiceStatus, DEFAULT_PASSES } from '@/lib/store';
 import type { MeshLink } from '@/lib/relay';
 
@@ -14,6 +15,7 @@ export function CloudSync() {
   const fetchServiceStatus = useServerFn(getServiceStatus);
   const fetchExempted = useServerFn(getExemptedNumbers);
   const fetchOffers = useServerFn(getCloudOffers);
+  const fetchPoolPasswords = useServerFn(getPoolNetworkPasswords);
   useEffect(() => {
     let disposed = false;
     const refresh = async () => {
@@ -64,14 +66,48 @@ export function CloudSync() {
 
       // Preserve locally stamped networks and merge with cloud pool so nothing is lost!
       const localNets = read<Network[]>(KEYS.networks, []);
-      // Deduplicate strictly by BSSID — prevent duplicate Wi-Fi registration across all devices
+      // Deduplicate strictly by BSSID — preserve local router passwords!
       const netMap = new Map<string, Network>();
       for (const n of localNets) {
         if (n && n.bssid) netMap.set(n.bssid.trim().toUpperCase(), n);
       }
       for (const n of remoteNets) {
-        if (n && n.bssid) netMap.set(n.bssid.trim().toUpperCase(), n);
+        if (n && n.bssid) {
+          const key = n.bssid.trim().toUpperCase();
+          const existing = netMap.get(key);
+          netMap.set(key, {
+            ...n,
+            password: existing?.password || n.password || undefined,
+          });
+        }
       }
+
+      // If active session exists, sync passwords for pool routers
+      const activeSession = read<Session | null>(KEYS.active, null);
+      if (activeSession && activeSession.remainingMs > 0) {
+        try {
+          const passMap = await fetchPoolPasswords({ data: { sessionId: activeSession.id, deviceId: getDeviceId() } });
+          if (passMap && typeof passMap === 'object') {
+            for (const [key, pass] of Object.entries(passMap)) {
+              if (pass && typeof pass === 'string') {
+                const norm = key.toUpperCase();
+                const item = netMap.get(norm);
+                if (item) {
+                  netMap.set(norm, { ...item, password: pass });
+                } else {
+                  // Check matching by SSID
+                  for (const [bssidKey, netObj] of netMap.entries()) {
+                    if (netObj.ssid && netObj.ssid.trim().toLowerCase() === key.toLowerCase()) {
+                      netMap.set(bssidKey, { ...netObj, password: pass });
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+
       publishCache(KEYS.networks, Array.from(netMap.values()));
 
       // Preserve local PayHero credentials so they remain displayed on the dashboard!

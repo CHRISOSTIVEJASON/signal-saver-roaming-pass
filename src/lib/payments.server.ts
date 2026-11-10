@@ -65,9 +65,10 @@ export async function activateTxn(db: Admin, txn: Txn, userId: string, deviceId?
   const companionPin = generateCompanionPin();
   const session: Session = { id: txn.id, phone: txn.phone, passId, totalMs, remainingMs: totalMs, lastTick: now, online: true, startedAt: now, companionPin };
   const safeUserId = ensureUuid(userId);
+  const effectiveDeviceId = deviceId || (txn as any).deviceId || null;
   const { error } = await db.from('gn_sessions').upsert({
     id: txn.id, user_id: safeUserId,
-    payload: j({ ...session, bound_device_id: deviceId || null, companion_pin: companionPin, paired_companion_id: null }),
+    payload: j({ ...session, bound_device_id: effectiveDeviceId, companion_pin: companionPin, paired_companion_id: null }),
   }, { onConflict: 'id' });
   if (error) throw new Error('Could not record your pass. Please try again.');
   await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Activated', passId }) }).eq('id', txn.id);
@@ -91,5 +92,6 @@ export async function confirmTxn(db: Admin, row: { id: string; user_id: string; 
     }
     if (st === 'pending') return { pending: true, session: null };
   }
-  return { pending: false, session: await activateTxn(db, txn, row.user_id, deviceId) };
+  const effectiveDeviceId = deviceId || (txn as any).deviceId || undefined;
+  return { pending: false, session: await activateTxn(db, txn, row.user_id, effectiveDeviceId) };
 }

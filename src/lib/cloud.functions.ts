@@ -241,6 +241,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
     let ref = 'GN' + id.replaceAll('-', '').slice(0, 12).toUpperCase();
     const live = settings?.live ?? false;
     const txn: Txn = { id, ref, phone, amount: pass.amount, passId: pass.id, at: Date.now(), status: 'Pending', mode: live ? 'Live' : 'Demo' };
+    (txn as any).deviceId = data.deviceId || userId;
 
     if (live) {
       const { data: credentials } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
@@ -720,7 +721,7 @@ export const updateMasterPasscode = createServerFn({ method: 'POST' })
   });
 
 export const syncCloudNetworks = createServerFn({ method: 'POST' })
-  .validator((input: { networks: Array<{ id: string; ssid: string; bssid: string; venue?: string; addedAt?: number }> }) =>
+  .validator((input: { networks: Array<{ id: string; ssid: string; bssid: string; venue?: string; addedAt?: number; password?: string | undefined }> }) =>
     z.object({
       networks: z.array(z.object({
         id: z.string(),
@@ -728,6 +729,7 @@ export const syncCloudNetworks = createServerFn({ method: 'POST' })
         bssid: z.string(),
         venue: z.string().optional().default(''),
         addedAt: z.number().optional().default(Date.now()),
+        password: z.string().optional(),
       }))
     }).parse(input)
   )
@@ -747,7 +749,85 @@ export const syncCloudNetworks = createServerFn({ method: 'POST' })
       console.error('Failed to sync networks to cloud:', error);
       throw new Error('Failed to sync networks: ' + error.message);
     }
+
+    // Persist any WPA2 router passwords securely so devices with active passes can connect
+    for (const n of data.networks) {
+      if (n.password && n.password.trim()) {
+        try {
+          await supabaseAdmin.from('gn_captive_credentials').upsert({
+            network_id: n.id,
+            config: {
+              kind: 'password',
+              username: 'wpa2',
+              secret: n.password.trim(),
+              loginUrl: 'https://router.local/login',
+              usernameField: 'username',
+              secretField: 'password',
+            },
+            updated_at: new Date().toISOString(),
+          });
+        } catch (credErr) {
+          console.warn('Network password sync to captive credentials notice:', credErr);
+        }
+      }
+    }
+
     return { ok: true };
+  });
+
+export const getPoolNetworkPasswords = createServerFn({ method: 'POST' })
+  .validator((input?: { sessionId?: string; deviceId?: string }) => z.object({
+    sessionId: z.string().optional(),
+    deviceId: z.string().optional(),
+  }).optional().parse(input ?? {}))
+  .handler(async ({ data }) => {
+    try {
+      const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+      let isAuthorized = false;
+
+      if (data?.sessionId) {
+        const { data: s } = await supabaseAdmin.from('gn_sessions').select('payload').eq('id', data.sessionId).maybeSingle();
+        if (s && (s.payload as any)?.remainingMs > 0) isAuthorized = true;
+      }
+
+      if (!isAuthorized && data?.deviceId) {
+        const { data: list } = await supabaseAdmin.from('gn_sessions').select('payload').limit(50);
+        isAuthorized = (list || []).some((row) => {
+          const p = row.payload as any;
+          return p && (p.bound_device_id === data.deviceId || p.paired_companion_id === data.deviceId) && p.remainingMs > 0;
+        });
+      }
+
+      // Check if user is authenticated admin
+      if (!isAuthorized) {
+        const { data: userAuth } = await supabaseAdmin.auth.getUser();
+        if (userAuth?.user) isAuthorized = true;
+      }
+
+      if (!isAuthorized) return {};
+
+      const { data: rows } = await supabaseAdmin.from('gn_captive_credentials').select('network_id, config');
+      const { data: nets } = await supabaseAdmin.from('gn_networks').select('id, ssid, bssid');
+
+      const passMap: Record<string, string> = {};
+      const netIdToInfo = new Map<string, { ssid: string; bssid: string }>();
+      (nets || []).forEach((n) => netIdToInfo.set(n.id, { ssid: n.ssid, bssid: n.bssid }));
+
+      (rows || []).forEach((r) => {
+        const net = netIdToInfo.get(r.network_id);
+        const cfg = r.config as any;
+        const secret = cfg?.secret || cfg?.password;
+        if (secret && typeof secret === 'string' && secret.trim()) {
+          if (net?.ssid) passMap[net.ssid.trim().toLowerCase()] = secret.trim();
+          if (net?.bssid) passMap[net.bssid.trim().toUpperCase()] = secret.trim();
+        }
+      });
+
+      return passMap;
+    } catch (e) {
+      console.warn('Could not load pool network passwords:', e);
+      return {};
+    }
   });
 
 export const getCloudNetworks = createServerFn({ method: 'POST' })
@@ -1465,6 +1545,9 @@ export const generateDynamicPaybillTicket = createServerFn({ method: 'POST' })
     (txn as any).checkoutRequestId = checkoutId;
     (txn as any).accountNumber = dynamicAccount;
     (txn as any).isDynamicPaybill = true;
+    if (data.deviceId) {
+      (txn as any).deviceId = data.deviceId;
+    }
 
     await supabaseAdmin.from('gn_transactions').insert({
       id,
