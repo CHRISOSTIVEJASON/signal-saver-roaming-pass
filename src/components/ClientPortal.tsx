@@ -516,7 +516,6 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         if (Capacitor.isNativePlatform()) {
           void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
           void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
-          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
         }
         onActivated(res.session);
         toast.success(`Active pass found • ${formatClock(res.session.remainingMs)} remaining`);

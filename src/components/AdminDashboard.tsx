@@ -1352,6 +1352,7 @@ function PoolManager() {
   const [manualSsid, setManualSsid] = useState("");
   const [manualBssid, setManualBssid] = useState("");
   const [venue, setVenue] = useState("");
+  const [manualPassword, setManualPassword] = useState("");
   const [isCaptive, setIsCaptive] = useState(false);
   const [editing, setEditing] = useState<Network | null>(null);
   const [pendingCaptiveNetwork, setPendingCaptiveNetwork] = useState<Network | null>(null);
@@ -1400,7 +1401,7 @@ function PoolManager() {
       return;
     }
 
-    const network: Network = { id: uid(), ssid: rawSsid, bssid: rawBssid, venue: venue.trim(), addedAt: Date.now() };
+    const network: Network = { id: uid(), ssid: rawSsid, bssid: rawBssid, venue: venue.trim(), addedAt: Date.now(), password: manualPassword.trim() || undefined };
 
     // If captive is checked, register network into pool first so credentials foreign keys succeed
     if (isCaptive) {
@@ -1421,6 +1422,7 @@ function PoolManager() {
       setVenue("");
       setManualSsid("");
       setManualBssid("");
+      setManualPassword("");
       setIsCaptive(false);
       toast.success(`Stored!! ${rawSsid} stamped into pool`);
     } catch {
@@ -1464,6 +1466,13 @@ function PoolManager() {
           )}
         </div>
         <input className={inputCls} placeholder="Venue label (optional), e.g. Westlands Mall" value={venue} onChange={(e) => setVenue(e.target.value)} />
+        <input
+          type="text"
+          className={inputCls}
+          placeholder="Wi-Fi Password / WPA Passphrase (optional, for secured Wi-Fi)"
+          value={manualPassword}
+          onChange={(e) => setManualPassword(e.target.value)}
+        />
         <label className="flex items-center gap-2.5 rounded-lg border border-border bg-background/50 p-2.5 text-xs font-medium cursor-pointer">
           <input
             type="checkbox"
@@ -1518,7 +1527,12 @@ function PoolManager() {
                 networks.map((n) => (
                   <div key={n.id} className="flex items-center gap-2 rounded-lg border border-border bg-background/50 p-2.5">
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{n.ssid}</div>
+                      <div className="truncate text-sm font-medium flex items-center gap-1.5">
+                      <span>{n.ssid}</span>
+                      {n.password && (
+                        <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-mono text-primary font-normal">WPA Secured</span>
+                      )}
+                    </div>
                       <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
                     </div>
                     <Button variant="outline" size="icon" title="Captive Portal Login" onClick={() => setEditing(n)} className="h-8 w-8 rounded-lg text-primary hover:bg-primary/10">

@@ -35,7 +35,7 @@ export const defaultDevice: Device = {
   perms: { background: "unset", wifi: "unset", relay: "unset" },
   currentWifi: null, personalSsids: ["My Home Wi-Fi"],
 };
-export type Network = { id: string; ssid: string; bssid: string; venue: string; addedAt: number };
+export type Network = { id: string; ssid: string; bssid: string; venue: string; addedAt: number; password?: string | undefined };
 export type Session = {
   id: string;
   phone: string;

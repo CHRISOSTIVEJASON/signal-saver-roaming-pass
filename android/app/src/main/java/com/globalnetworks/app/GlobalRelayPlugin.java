@@ -27,6 +27,7 @@ import android.provider.Settings;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.JSArray;
 import java.util.List;
+import java.util.Iterator;
 import java.util.ArrayList;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -658,7 +659,20 @@ public class GlobalRelayPlugin extends Plugin {
                 }
             }
 
-            NetworkWatcher.getInstance(getContext()).syncConfig(ssids, bssids, hasActivePass, soundAlerts);
+            JSObject passObj = call.getObject("poolPasswords");
+            Map<String, String> passwords = new HashMap<>();
+            if (passObj != null) {
+                Iterator<String> keys = passObj.keys();
+                while (keys.hasNext()) {
+                    String k = keys.next();
+                    try {
+                        String v = passObj.getString(k);
+                        if (v != null) passwords.put(k, v);
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            NetworkWatcher.getInstance(getContext()).syncConfig(ssids, bssids, hasActivePass, soundAlerts, passwords);
             JSObject res = new JSObject();
             res.put("success", true);
             call.resolve(res);

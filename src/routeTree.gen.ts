@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as ApiPublicPayheroCallbackRouteImport } from './routes/api/public/payhero-callback'
+import { Route as ApiPublicStkPushRouteImport } from './routes/api/public/stk-push'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,35 +30,57 @@ const ApiPublicPayheroCallbackRoute =
     path: '/api/public/payhero-callback',
     getParentRoute: () => rootRouteImport,
   } as any)
+const ApiPublicStkPushRoute = ApiPublicStkPushRouteImport.update({
+  id: '/api/public/stk-push',
+  path: '/api/public/stk-push',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
   '/api/public/payhero-callback': typeof ApiPublicPayheroCallbackRoute
+  '/api/public/stk-push': typeof ApiPublicStkPushRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
   '/api/public/payhero-callback': typeof ApiPublicPayheroCallbackRoute
+  '/api/public/stk-push': typeof ApiPublicStkPushRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/reset-password': typeof ResetPasswordRoute
   '/api/public/payhero-callback': typeof ApiPublicPayheroCallbackRoute
+  '/api/public/stk-push': typeof ApiPublicStkPushRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/reset-password' | '/api/public/payhero-callback'
+  fullPaths:
+    | '/'
+    | '/reset-password'
+    | '/api/public/payhero-callback'
+    | '/api/public/stk-push'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/reset-password' | '/api/public/payhero-callback'
-  id: '__root__' | '/' | '/reset-password' | '/api/public/payhero-callback'
+  to:
+    | '/'
+    | '/reset-password'
+    | '/api/public/payhero-callback'
+    | '/api/public/stk-push'
+  id:
+    | '__root__'
+    | '/'
+    | '/reset-password'
+    | '/api/public/payhero-callback'
+    | '/api/public/stk-push'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   ApiPublicPayheroCallbackRoute: typeof ApiPublicPayheroCallbackRoute
+  ApiPublicStkPushRoute: typeof ApiPublicStkPushRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -83,6 +106,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicPayheroCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/stk-push': {
+      id: '/api/public/stk-push'
+      path: '/api/public/stk-push'
+      fullPath: '/api/public/stk-push'
+      preLoaderRoute: typeof ApiPublicStkPushRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -90,6 +120,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   ApiPublicPayheroCallbackRoute: ApiPublicPayheroCallbackRoute,
+  ApiPublicStkPushRoute: ApiPublicStkPushRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

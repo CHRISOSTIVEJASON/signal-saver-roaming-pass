@@ -53,6 +53,7 @@ public class NetworkWatcher {
     private static final String KEY_LAST_ALERT_TIME = "last_alert_time";
     private static final String KEY_LAST_DETECTED_SSID = "last_detected_ssid";
     private static final String KEY_BEEP_ALERTS_ENABLED = "beep_alerts_enabled";
+    private static final String KEY_POOL_PASSWORDS_JSON = "pool_passwords_json";
 
     public static final long COOLDOWN_MS = 20 * 60 * 1000L; // 20 minutes cooldown
     public static final String NOTIFICATION_CHANNEL_ID = "gn_network_alert";
@@ -200,6 +201,10 @@ public class NetworkWatcher {
     }
 
     public void syncConfig(List<String> ssids, List<String> bssids, boolean hasActivePass, boolean soundAlerts) {
+        syncConfig(ssids, bssids, hasActivePass, soundAlerts, Collections.emptyMap());
+    }
+
+    public void syncConfig(List<String> ssids, List<String> bssids, boolean hasActivePass, boolean soundAlerts, java.util.Map<String, String> passwords) {
         Set<String> cleanSsids = new HashSet<>();
         if (ssids != null) {
             for (String s : ssids) {
@@ -218,9 +223,21 @@ public class NetworkWatcher {
             }
         }
 
+        org.json.JSONObject passJson = new org.json.JSONObject();
+        if (passwords != null) {
+            for (java.util.Map.Entry<String, String> e : passwords.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) {
+                    try {
+                        passJson.put(e.getKey().trim().toLowerCase(Locale.US), e.getValue().trim());
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+
         prefs.edit()
                 .putStringSet(KEY_POOL_SSIDS, cleanSsids)
                 .putStringSet(KEY_POOL_BSSIDS, cleanBssids)
+                .putString(KEY_POOL_PASSWORDS_JSON, passJson.toString())
                 .putBoolean(KEY_HAS_ACTIVE_PASS, hasActivePass)
                 .putBoolean(KEY_BEEP_ALERTS_ENABLED, soundAlerts)
                 .apply();
@@ -231,6 +248,19 @@ public class NetworkWatcher {
         if (scheduler != null && !scheduler.isShutdown()) {
             scheduler.execute(this::sniffNetworks);
         }
+    }
+
+    public String getPasswordForSsid(String ssid) {
+        if (ssid == null) return null;
+        String raw = prefs.getString(KEY_POOL_PASSWORDS_JSON, "{}");
+        try {
+            org.json.JSONObject json = new org.json.JSONObject(raw);
+            String norm = ssid.trim().toLowerCase(Locale.US);
+            if (json.has(norm)) {
+                return json.getString(norm);
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     public Set<String> getPoolSsids() {
@@ -423,13 +453,33 @@ public class NetworkWatcher {
     }
 
     private void suggestNetworkToAndroid(String ssid) {
-        if (Build.VERSION.SDK_INT >= 29 && wifiManager != null && ssid != null && !ssid.isEmpty() && !ssid.equals("Global Mesh Relay")) {
+        if (ssid == null || ssid.isEmpty() || ssid.equals("Global Mesh Relay")) return;
+        String pass = getPasswordForSsid(ssid);
+
+        if (Build.VERSION.SDK_INT >= 29 && wifiManager != null) {
             try {
-                WifiNetworkSuggestion suggestion = new WifiNetworkSuggestion.Builder()
+                WifiNetworkSuggestion.Builder builder = new WifiNetworkSuggestion.Builder()
                         .setSsid(ssid)
-                        .setIsAppInteractionRequired(false)
-                        .build();
+                        .setIsAppInteractionRequired(false);
+                if (pass != null && !pass.trim().isEmpty()) {
+                    builder.setWpa2Passphrase(pass.trim());
+                }
+                WifiNetworkSuggestion suggestion = builder.build();
                 wifiManager.addNetworkSuggestions(Collections.singletonList(suggestion));
+            } catch (Throwable ignored) {}
+        }
+
+        if (Build.VERSION.SDK_INT < 29 && wifiManager != null && pass != null && !pass.trim().isEmpty()) {
+            try {
+                android.net.wifi.WifiConfiguration conf = new android.net.wifi.WifiConfiguration();
+                conf.SSID = """ + ssid + """;
+                conf.preSharedKey = """ + pass.trim() + """;
+                int netId = wifiManager.addNetwork(conf);
+                if (netId != -1) {
+                    wifiManager.disconnect();
+                    wifiManager.enableNetwork(netId, true);
+                    wifiManager.reconnect();
+                }
             } catch (Throwable ignored) {}
         }
     }
