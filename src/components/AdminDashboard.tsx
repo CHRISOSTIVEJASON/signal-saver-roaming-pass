@@ -23,7 +23,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const [cloudTxns, setCloudTxns] = useState<Txn[]>([]);
   const [cloudSessions, setCloudSessions] = useState<Session[]>([]);
   const [activeOnly, setActiveOnly] = useState(true);
-  const [networks] = useStored<Network[]>(KEYS.networks, []);
+  const [networks, setNetworks] = useStored<Network[]>(KEYS.networks, []);
   const [status] = useServiceStatus();
   const [blocked, setBlocked] = useBlockedNumbers();
   const [alerts] = useNetworkAlerts();
@@ -621,12 +621,29 @@ function Pill({ tone, children }: { tone: "primary" | "warning" | "destructive";
 function Table({ head, rows, empty }: { head: string[]; rows: ReactNode[][]; empty: string }) {
   if (!rows.length) return <p className="py-6 text-center text-sm text-muted-foreground">{empty}</p>;
   return (
-    <div className="-mx-4 overflow-x-auto px-4">
-      <table className="w-full min-w-[520px] text-sm">
-        <thead><tr className="text-left text-xs uppercase text-muted-foreground">{head.map((h) => <th key={h} className="pb-2 pr-3 font-medium">{h}</th>)}</tr></thead>
-        <tbody>{rows.map((r, i) => <tr key={i} className="border-t border-border">{r.map((c, j) => <td key={j} className="py-2 pr-3">{c}</td>)}</tr>)}</tbody>
-      </table>
-    </div>
+    <>
+      {/* Mobile view: Stacked responsive cards with zero horizontal scroll */}
+      <div className="space-y-2.5 sm:hidden">
+        {rows.map((row, i) => (
+          <div key={i} className="rounded-lg border border-border bg-card/60 p-3 space-y-1.5 text-xs shadow-xs">
+            {row.map((cell, j) => (
+              <div key={j} className="flex items-center justify-between gap-2 border-b border-border/40 pb-1.5 last:border-b-0 last:pb-0">
+                <span className="font-medium text-muted-foreground">{head[j] || ""}:</span>
+                <div className="text-right min-w-0 max-w-[70%] break-words">{cell}</div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop/Tablet view: full table */}
+      <div className="hidden sm:block -mx-4 overflow-x-auto px-4">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs uppercase text-muted-foreground">{head.map((h) => <th key={h} className="pb-2 pr-3 font-medium">{h}</th>)}</tr></thead>
+          <tbody>{rows.map((r, i) => <tr key={i} className="border-t border-border">{r.map((c, j) => <td key={j} className="py-2 pr-3">{c}</td>)}</tr>)}</tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

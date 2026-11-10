@@ -324,8 +324,8 @@ export function useBlockedNumbers() {
 export type NetworkAlert = {
   id: string;
   ssid: string;
-  bssid?: string;
-  venue?: string;
+  bssid?: string | undefined;
+  venue?: string | undefined;
   type: "password_mismatch" | "auth_failed";
   detectedAt: number;
   resolved: boolean;
