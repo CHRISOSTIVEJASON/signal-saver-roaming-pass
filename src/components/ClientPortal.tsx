@@ -111,7 +111,62 @@ export function ClientPortal() {
   const [activeId, setActiveId] = useStored<string | null>(KEYS.active, null);
   const [sessions, setSessions] = useStored<Session[]>(KEYS.sessions, []);
   const [buying, setBuying] = useState(false);
+  const verifyReceiptFn = useServerFn(verifyManualMpesaReceipt);
   const session = sessions.find((s) => s.id === activeId && s.remainingMs > 0) ?? sessions.find((s) => s.remainingMs > 0);
+
+  // Glitch 9: Automatically sync and verify offline M-Pesa receipts when online
+  useEffect(() => {
+    let syncing = false;
+    const syncOfflineReceipts = async () => {
+      if (syncing || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+      try {
+        const raw = localStorage.getItem("gn_offline_receipts");
+        if (!raw) return;
+        const queue: Array<{ receiptNumber: string; phone: string; deviceId: string; at: number }> = JSON.parse(raw);
+        if (!Array.isArray(queue) || !queue.length) return;
+        syncing = true;
+        const remaining: typeof queue = [];
+        for (const item of queue) {
+          try {
+            const res = await verifyReceiptFn({
+              data: {
+                receiptNumber: item.receiptNumber,
+                phone: item.phone,
+                deviceId: item.deviceId || getDeviceId(),
+              },
+            });
+            if (res && res.ok && res.session) {
+              setSessions((p) => [{ ...res.session, lastTick: Date.now() }, ...p.filter((x) => x.id !== res.session.id)]);
+              setActiveId(res.session.id);
+              savePersistedPhone(item.phone);
+              toast.success("Offline receipt verified! Roaming pass is now active.");
+            } else {
+              remaining.push(item);
+            }
+          } catch {
+            remaining.push(item);
+          }
+        }
+        if (remaining.length > 0) {
+          localStorage.setItem("gn_offline_receipts", JSON.stringify(remaining));
+        } else {
+          localStorage.removeItem("gn_offline_receipts");
+        }
+      } catch (e) {
+        console.warn("Offline receipt sync error:", e);
+      } finally {
+        syncing = false;
+      }
+    };
+
+    window.addEventListener("online", syncOfflineReceipts);
+    syncOfflineReceipts();
+    const interval = setInterval(syncOfflineReceipts, 25_000);
+    return () => {
+      window.removeEventListener("online", syncOfflineReceipts);
+      clearInterval(interval);
+    };
+  }, [verifyReceiptFn, setSessions, setActiveId]);
 
   if (session && !buying) return <ActiveSession session={session} setSessions={setSessions} onEnd={() => setBuying(true)} />;
   return (
@@ -421,7 +476,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     const deviceId = getDeviceId();
     let currentTxnId = uid();
     try {
-      const r = await startPayment({ data: { phone: msisdn, passId: pass.id, deviceId } });
+      const r = await startPayment({ data: { phone: msisdn, passId: pass.id, deviceId, origin: typeof window !== "undefined" ? window.location.origin : undefined } });
       currentTxnId = r.id;
       const ref = r.ref || ("GN" + uid());
 

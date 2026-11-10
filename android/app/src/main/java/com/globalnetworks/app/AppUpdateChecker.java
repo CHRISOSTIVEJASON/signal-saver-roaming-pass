@@ -23,18 +23,16 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
-import java.util.Locale;
-import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Checks for mandatory updates on app launch and prompts the user to download and install.
+ * Checks for mandatory updates on app launch via Supabase gn_settings and prompts user to install.
  */
 public final class AppUpdateChecker {
     private static final String TAG = "AppUpdateChecker";
-    private static final String RELEASE_API = "https://api.github.com/repos/CHRISOSTIVEJASON/signal-saver-roaming-pass/releases/tags/latest-apk";
+    private static final String SETTINGS_API = "https://ddzountfjjlfngshwrce.supabase.co/rest/v1/gn_settings?id=eq.global&select=apk_url,latest_version,update_required";
+    private static final String SUPABASE_KEY = "sb_publishable_8IdamU64XULEckvATKINhQ_dmsq67Na";
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile boolean checkInFlight = false;
@@ -50,10 +48,12 @@ public final class AppUpdateChecker {
 
         EXECUTOR.execute(() -> {
             try {
-                URL url = new URL(RELEASE_API);
+                URL url = new URL(SETTINGS_API);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("GET");
-                conn.setRequestProperty("Accept", "application/vnd.github+json");
+                conn.setRequestProperty("Accept", "application/json");
+                conn.setRequestProperty("apikey", SUPABASE_KEY);
+                conn.setRequestProperty("Authorization", "Bearer " + SUPABASE_KEY);
                 conn.setRequestProperty("User-Agent", "Signal-Saver-Roaming-Pass-Android");
                 conn.setConnectTimeout(8000);
                 conn.setReadTimeout(8000);
@@ -72,20 +72,23 @@ public final class AppUpdateChecker {
                     }
                 }
 
-                JSONObject release = new JSONObject(text.toString());
-                String publishedAt = release.optString("published_at", "");
-                long releaseTime = parseReleaseTime(publishedAt);
+                JSONArray arr = new JSONArray(text.toString());
+                if (arr.length() == 0) return;
+                JSONObject settings = arr.getJSONObject(0);
+
+                String latestVersion = settings.optString("latest_version", "").trim();
+                String apkUrl = settings.optString("apk_url", "").trim();
+                boolean updateRequired = settings.optBoolean("update_required", false);
 
                 PackageInfo info = activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0);
-                long installedTime = info.lastUpdateTime;
+                String currentVersion = info.versionName != null ? info.versionName.trim() : "1.0.0";
 
-                String apkUrl = findApkUrl(release);
-                if (apkUrl == null) {
+                if (apkUrl.isEmpty()) {
                     apkUrl = "https://github.com/CHRISOSTIVEJASON/signal-saver-roaming-pass/releases/download/latest-apk/app-debug.apk";
                 }
 
-                // If remote release is newer than local build timestamp (by at least 2 minutes)
-                if (releaseTime > (installedTime + 120000L)) {
+                boolean isNewer = isNewerVersion(latestVersion, currentVersion);
+                if (isNewer || (updateRequired && !latestVersion.isEmpty() && !latestVersion.equals(currentVersion))) {
                     final String targetUrl = apkUrl;
                     MAIN.post(() -> showMandatoryUpdateDialog(activity, targetUrl));
                 }
@@ -99,30 +102,21 @@ public final class AppUpdateChecker {
         });
     }
 
-    private static long parseReleaseTime(String value) {
+    private static boolean isNewerVersion(String remote, String local) {
+        if (remote == null || remote.isEmpty()) return false;
+        if (local == null || local.isEmpty()) return true;
         try {
-            SimpleDateFormat fmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
-            fmt.setTimeZone(TimeZone.getTimeZone("UTC"));
-            return fmt.parse(value).getTime();
-        } catch (Exception ignored) {
-            return 0L;
-        }
-    }
-
-    private static String findApkUrl(JSONObject release) {
-        try {
-            if (release.has("assets")) {
-                JSONArray assets = release.getJSONArray("assets");
-                for (int i = 0; i < assets.length(); i++) {
-                    JSONObject asset = assets.getJSONObject(i);
-                    String name = asset.optString("name", "");
-                    if ("app-debug.apk".equals(name) || name.endsWith(".apk")) {
-                        return asset.optString("browser_download_url", null);
-                    }
-                }
+            String[] rParts = remote.replaceAll("[^0-9.]", "").split("\\.");
+            String[] lParts = local.replaceAll("[^0-9.]", "").split("\\.");
+            int length = Math.max(rParts.length, lParts.length);
+            for (int i = 0; i < length; i++) {
+                int r = i < rParts.length && !rParts[i].isEmpty() ? Integer.parseInt(rParts[i]) : 0;
+                int l = i < lParts.length && !lParts[i].isEmpty() ? Integer.parseInt(lParts[i]) : 0;
+                if (r > l) return true;
+                if (r < l) return false;
             }
         } catch (Exception ignored) {}
-        return null;
+        return false;
     }
 
     private static void showMandatoryUpdateDialog(final Activity activity, final String downloadUrl) {

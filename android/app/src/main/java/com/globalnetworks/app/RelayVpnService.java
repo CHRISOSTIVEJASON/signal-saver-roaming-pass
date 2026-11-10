@@ -88,7 +88,11 @@ public class RelayVpnService extends VpnService {
                     .setContentTitle(title)
                     .setContentText(text)
                     .setOngoing(true);
-            startForeground(2, builder.build());
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(2, builder.build(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+            } else {
+                startForeground(2, builder.build());
+            }
         } catch (Throwable t) {
             Log.w(TAG, "VPN foreground notification could not be started", t);
         }

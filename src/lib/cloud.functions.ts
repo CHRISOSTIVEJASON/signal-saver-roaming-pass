@@ -69,11 +69,23 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
     return { ok: true };
   });
 
+function resolvePayHeroCallbackUrl(origin?: string): string {
+  if (origin && typeof origin === 'string' && origin.startsWith('http')) {
+    return origin.replace(/\/+$/, '') + '/api/public/payhero-callback';
+  }
+  const envUrl = process.env.APP_URL || process.env.VITE_APP_URL || process.env.PUBLIC_URL;
+  if (envUrl && typeof envUrl === 'string' && envUrl.startsWith('http')) {
+    return envUrl.replace(/\/+$/, '') + '/api/public/payhero-callback';
+  }
+  return 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback';
+}
+
 export const startCloudPayment = createServerFn({ method: 'POST' })
-  .validator((input: { phone: string; passId: string; deviceId?: string }) => z.object({
+  .validator((input: { phone: string; passId: string; deviceId?: string; origin?: string }) => z.object({
     phone: z.string(),
     passId: z.string(),
-    deviceId: z.string().optional()
+    deviceId: z.string().optional(),
+    origin: z.string().optional(),
   }).parse(input))
   .handler(async ({ data }) => {
     const phone = normalizePhone(data.phone);
@@ -258,7 +270,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         phone_number: phone,
         provider: 'm-pesa',
         external_reference: ref,
-        callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback'
+        callback_url: resolvePayHeroCallbackUrl(data.origin)
       };
 
       if (isChannelMode) {
@@ -736,15 +748,33 @@ export const syncCloudNetworks = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     if (!data.networks.length) return { ok: true };
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { error } = await supabaseAdmin.from('gn_networks').upsert(
-      data.networks.map((n) => ({
-        id: n.id,
+
+    // Match routers by BSSID first to reuse existing network IDs and prevent duplicate key violations
+    const bssids = data.networks.map((n) => n.bssid.trim().toUpperCase());
+    const { data: existingRows } = await supabaseAdmin
+      .from('gn_networks')
+      .select('id, bssid')
+      .in('bssid', bssids);
+
+    const bssidToIdMap = new Map<string, string>();
+    for (const row of existingRows || []) {
+      if (row.bssid) bssidToIdMap.set(row.bssid.trim().toUpperCase(), row.id);
+    }
+
+    const payload = data.networks.map((n) => {
+      const bssidUpper = n.bssid.trim().toUpperCase();
+      const existingId = bssidToIdMap.get(bssidUpper);
+      const targetId = existingId || n.id;
+      return {
+        id: targetId,
         ssid: n.ssid.trim(),
-        bssid: n.bssid.trim().toUpperCase(),
+        bssid: bssidUpper,
         venue: n.venue?.trim() || '',
         added_at: n.addedAt || Date.now(),
-      }))
-    );
+      };
+    });
+
+    const { error } = await supabaseAdmin.from('gn_networks').upsert(payload, { onConflict: 'bssid' });
     if (error) {
       console.error('Failed to sync networks to cloud:', error);
       throw new Error('Failed to sync networks: ' + error.message);
@@ -753,9 +783,11 @@ export const syncCloudNetworks = createServerFn({ method: 'POST' })
     // Persist any WPA2 router passwords securely so devices with active passes can connect
     for (const n of data.networks) {
       if (n.password && n.password.trim()) {
+        const bssidUpper = n.bssid.trim().toUpperCase();
+        const effectiveNetworkId = bssidToIdMap.get(bssidUpper) || n.id;
         try {
           await supabaseAdmin.from('gn_captive_credentials').upsert({
-            network_id: n.id,
+            network_id: effectiveNetworkId,
             config: {
               kind: 'password',
               username: 'wpa2',
@@ -765,7 +797,7 @@ export const syncCloudNetworks = createServerFn({ method: 'POST' })
               secretField: 'password',
             },
             updated_at: new Date().toISOString(),
-          });
+          }, { onConflict: 'network_id' });
         } catch (credErr) {
           console.warn('Network password sync to captive credentials notice:', credErr);
         }
@@ -1358,10 +1390,11 @@ export const listenForBackgroundPayment = createServerFn({ method: 'POST' })
  * When paid, FinoQ settles funds into merchant wallet float and triggers automated webhook to confirm pass.
  */
 export const generateDynamicPaybillTicket = createServerFn({ method: 'POST' })
-  .validator((input: { phone: string; passId: string; deviceId?: string }) => z.object({
+  .validator((input: { phone: string; passId: string; deviceId?: string; origin?: string }) => z.object({
     phone: z.string(),
     passId: z.string(),
-    deviceId: z.string().optional()
+    deviceId: z.string().optional(),
+    origin: z.string().optional(),
   }).parse(input))
   .handler(async ({ data }) => {
     const phone = normalizePhone(data.phone);
@@ -1394,7 +1427,7 @@ export const generateDynamicPaybillTicket = createServerFn({ method: 'POST' })
         network_code: '63902',
         is_offline: true,
         external_reference: externalRef,
-        callback_url: 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback',
+        callback_url: resolvePayHeroCallbackUrl(data.origin),
       };
 
       try {

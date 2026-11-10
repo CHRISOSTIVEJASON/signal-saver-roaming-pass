@@ -84,6 +84,8 @@ export function NativeBridge() {
       void GlobalRelay.syncWatcherConfig(getWatcherConfig(sessionRef.current, poolRef.current)).catch(() => {});
     };
 
+    let isAutoRouterActive = false;
+
     const check = () => {
       const device = read<Device>(KEYS.device, defaultDevice);
       const active = sessionRef.current.some((s) => s.remainingMs > 0 && !s.frozen);
@@ -99,12 +101,27 @@ export function NativeBridge() {
         void GlobalRelay.start({ active, upstreamInPool }).catch(() => {});
         if (!upstreamInPool) {
           if (device.currentWifi) {
-            void GlobalRelay.startClientAutoRouter().catch(() => {});
+            if (!isAutoRouterActive) {
+              isAutoRouterActive = true;
+              void GlobalRelay.startClientAutoRouter().catch(() => {});
+            }
           } else {
+            if (isAutoRouterActive) {
+              isAutoRouterActive = false;
+              void GlobalRelay.stopClientAutoRouter().catch(() => {});
+            }
             void GlobalRelay.triggerCompanionFallback().catch(() => {});
+          }
+        } else {
+          if (isAutoRouterActive) {
+            isAutoRouterActive = false;
+            void GlobalRelay.stopClientAutoRouter().catch(() => {});
           }
         }
       } else {
+        if (isAutoRouterActive) {
+          isAutoRouterActive = false;
+        }
         void GlobalRelay.stop().catch(() => {});
         void GlobalRelay.stopClientAutoRouter().catch(() => {});
       }

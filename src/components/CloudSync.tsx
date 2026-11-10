@@ -84,7 +84,18 @@ export function CloudSync() {
       }
 
       // If active session exists, sync passwords for pool routers
-      const activeSession = read<Session | null>(KEYS.active, null);
+      const activeRaw = read<string | Session | null>(KEYS.active, null);
+      const allSessions = read<Session[]>(KEYS.sessions, []);
+      let activeSession: Session | undefined;
+      if (typeof activeRaw === 'string') {
+        activeSession = allSessions.find((s) => s.id === activeRaw && s.remainingMs > 0);
+      } else if (activeRaw && typeof activeRaw === 'object') {
+        activeSession = (activeRaw as Session).remainingMs > 0 ? (activeRaw as Session) : undefined;
+      }
+      if (!activeSession) {
+        activeSession = allSessions.find((s) => s.remainingMs > 0 && !s.frozen);
+      }
+
       if (activeSession && activeSession.remainingMs > 0) {
         try {
           const passMap = await fetchPoolPasswords({ data: { sessionId: activeSession.id, deviceId: getDeviceId() } });

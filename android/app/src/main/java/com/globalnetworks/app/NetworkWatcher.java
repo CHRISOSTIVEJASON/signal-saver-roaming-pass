@@ -83,6 +83,7 @@ public class NetworkWatcher {
     private volatile long lastSuggestionTime = 0;
     private volatile long lastFallbackTrigger = 0;
     private volatile long lastScanRequestTime = 0;
+    private final java.util.Map<String, String> activeSuggestedSsids = new java.util.concurrent.ConcurrentHashMap<>();
     private static final long SCAN_THROTTLE_WINDOW_MS = 35_000L; // 35s throttle window
 
     public int getLastBestRssi() {
@@ -529,31 +530,51 @@ public class NetworkWatcher {
         lastSuggestedSsid = ssid;
         lastSuggestionTime = System.currentTimeMillis();
         String pass = getPasswordForSsid(ssid);
+        String trimmedPass = pass != null ? pass.trim() : null;
+
+        // Quota Jam Fix: If this network was already suggested with the exact same passphrase, avoid redundant re-adding
+        String existingPass = activeSuggestedSsids.get(ssid);
+        if (existingPass != null && existingPass.equals(trimmedPass != null ? trimmedPass : "")) {
+            return;
+        }
 
         if (Build.VERSION.SDK_INT >= 29 && wifiManager != null) {
             try {
                 WifiNetworkSuggestion.Builder builder = new WifiNetworkSuggestion.Builder()
                         .setSsid(ssid)
                         .setIsAppInteractionRequired(false);
-                if (pass != null && !pass.trim().isEmpty()) {
-                    builder.setWpa2Passphrase(pass.trim());
+
+                // Passphrase length guard: Android requires WPA2 passphrase to be 8-63 characters
+                if (trimmedPass != null && trimmedPass.length() >= 8 && trimmedPass.length() <= 63) {
+                    builder.setWpa2Passphrase(trimmedPass);
                 }
+
                 WifiNetworkSuggestion suggestion = builder.build();
+
+                // Quota Jam Fix: Remove outdated suggestion before adding new one to avoid exceeding MAX_PER_APP
+                try {
+                    wifiManager.removeNetworkSuggestions(Collections.singletonList(suggestion));
+                } catch (Throwable ignored) {}
+
                 wifiManager.addNetworkSuggestions(Collections.singletonList(suggestion));
-            } catch (Throwable ignored) {}
+                activeSuggestedSsids.put(ssid, trimmedPass != null ? trimmedPass : "");
+            } catch (Throwable t) {
+                Log.w(TAG, "Network suggestion rejected: " + t.getMessage());
+            }
         }
 
-        if (Build.VERSION.SDK_INT < 29 && wifiManager != null && pass != null && !pass.trim().isEmpty()) {
+        if (Build.VERSION.SDK_INT < 29 && wifiManager != null && trimmedPass != null && trimmedPass.length() >= 8 && trimmedPass.length() <= 63) {
             try {
                 android.net.wifi.WifiConfiguration conf = new android.net.wifi.WifiConfiguration();
                 conf.SSID = "\"" + ssid + "\"";
-                conf.preSharedKey = "\"" + pass.trim() + "\"";
+                conf.preSharedKey = "\"" + trimmedPass + "\"";
                 int netId = wifiManager.addNetwork(conf);
                 if (netId != -1) {
                     wifiManager.disconnect();
                     wifiManager.enableNetwork(netId, true);
                     wifiManager.reconnect();
                 }
+                activeSuggestedSsids.put(ssid, trimmedPass);
             } catch (Throwable ignored) {}
         }
     }

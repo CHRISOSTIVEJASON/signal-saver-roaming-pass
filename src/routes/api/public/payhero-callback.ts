@@ -22,7 +22,7 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
 
         const refs = [externalRef, checkoutId, ref, billRef, ticketPart].filter(Boolean);
         const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-        const { confirmTxn, loadOffers } = await import('@/lib/payments.server');
+        const { confirmTxn, activateTxn, loadOffers } = await import('@/lib/payments.server');
 
         // 1. If matching an existing pending transaction
         if (refs.length > 0) {
@@ -38,10 +38,28 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
               (p.accountNumber && refs.some((rStr: string) => rStr && (p.accountNumber.toUpperCase().includes(rStr.toUpperCase()) || rStr.toUpperCase().includes(p.accountNumber.toUpperCase()))))
             );
           });
+          const cbStatus = String(r.Status ?? r.status ?? raw.status ?? '').toUpperCase();
+          const cbResultCode = r?.ResultCode ?? r?.result_code ?? raw?.ResultCode ?? raw?.result_code;
+          const cbResponseCode = r?.ResponseCode ?? r?.response_code ?? raw?.ResponseCode ?? raw?.response_code;
+          const isVerifiedSuccess =
+            ['SUCCESS', 'SUCCESSFUL', 'COMPLETED', 'COMPLETE', 'PAID', 'CONFIRMED'].includes(cbStatus) ||
+            cbResultCode === 0 ||
+            cbResultCode === '0' ||
+            cbResponseCode === 0 ||
+            cbResponseCode === '0' ||
+            r?.paymentSuccess === true ||
+            r?.is_paid === true ||
+            raw?.success === true;
+
           if (row) {
             try {
               const p = row.payload as any;
-              await confirmTxn(supabaseAdmin, row, p?.deviceId);
+              if (isVerifiedSuccess) {
+                // Immediate activation on verified success to eliminate PayHero timing race condition
+                await activateTxn(supabaseAdmin, p, row.user_id, p?.deviceId);
+              } else {
+                await confirmTxn(supabaseAdmin, row, p?.deviceId);
+              }
               return new Response('ok');
             } catch (e) {
               console.warn('payhero callback existing txn confirmation error:', e);
