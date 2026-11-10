@@ -194,6 +194,7 @@ public class NetworkWatcher {
                                 }
                             }
                         }
+                        RelayService.clearDnsCache();
                         mainHandler.post(() -> sniffNetworks());
                     }
                 };

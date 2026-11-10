@@ -1291,6 +1291,12 @@ export const listenForBackgroundPayment = createServerFn({ method: 'POST' })
 
     if (activeSessionRow) {
       const payload = activeSessionRow.payload as any;
+      // Protection: if this session is locked to a different primary device and not this companion device,
+      // do not hijack or falsely activate it on this foreign device.
+      if (data.deviceId && payload.bound_device_id && payload.bound_device_id !== data.deviceId && payload.paired_companion_id !== data.deviceId) {
+        return { status: 'idle' as const };
+      }
+
       if (data.deviceId && (!payload.bound_device_id || payload.bound_device_id === data.deviceId)) {
         payload.bound_device_id = data.deviceId;
         await supabaseAdmin.from('gn_sessions').update({
@@ -1342,123 +1348,6 @@ export const listenForBackgroundPayment = createServerFn({ method: 'POST' })
     }
 
     return { status: 'idle' as const };
-  });
-
-export const verifyManualPaymentReceipt = createServerFn({ method: 'POST' })
-  .validator((input: { phone: string; receiptCode: string; deviceId?: string }) => z.object({
-    phone: z.string(),
-    receiptCode: z.string().min(4).max(60),
-    deviceId: z.string().optional(),
-  }).parse(input))
-  .handler(async ({ data }) => {
-    const phone = normalizePhone(data.phone);
-    if (!phone) throw new Error('Enter a valid M-Pesa phone number');
-    const receipt = data.receiptCode.trim().toUpperCase();
-    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { loadOffers } = await import('./payments.server');
-    const { getPayHeroAuthHeader } = await import('./payhero-auth');
-
-    // 1. Check if already recorded in gn_transactions
-    const { data: existingTxns } = await supabaseAdmin.from('gn_transactions').select('*').limit(200);
-    const existing = (existingTxns || []).find((t) => {
-      const p = t.payload as any;
-      return p && (p.ref?.toUpperCase() === receipt || p.externalRef?.toUpperCase() === receipt);
-    });
-
-    if (existing) {
-      const p = existing.payload as any;
-      if (p.status === 'Underpaid') {
-        throw new Error(`Receipt ${receipt} is for KES ${p.amount}, which is below the minimum pass amount of KES 10. Recorded as underpaid.`);
-      }
-      const { confirmTxn } = await import('./payments.server');
-      const res = await confirmTxn(supabaseAdmin, existing, data.deviceId);
-      if (res.session) return { ok: true, session: res.session };
-    }
-
-    // 2. Query PayHero transaction status API
-    const { data: creds } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
-    if (!creds) throw new Error('Payment credentials not configured');
-    const headers = { Authorization: getPayHeroAuthHeader(creds), Accept: 'application/json' };
-
-    let res = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(receipt)}`, { headers });
-    if (res.status === 404) {
-      res = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?external_reference=${encodeURIComponent(receipt)}`, { headers });
-    }
-
-    if (!res.ok) {
-      throw new Error('Receipt not verified yet. Ensure you paid to Paybill 756756 with Account 553125#13205.');
-    }
-
-    const raw = (await res.json().catch(() => ({}))) as any;
-    const d = raw?.data && typeof raw.data === 'object' ? raw.data : raw;
-    const status = String(d?.status ?? raw?.status ?? '').trim().toUpperCase();
-    const isPaid = ['SUCCESS', 'SUCCESSFUL', 'COMPLETED', 'COMPLETE', 'PAID', 'CONFIRMED'].includes(status) || d?.is_paid === true || d?.paymentSuccess === true;
-
-    if (!isPaid) {
-      throw new Error(`Payment status is ${status || 'PENDING'}. Please allow a moment for M-Pesa confirmation.`);
-    }
-
-    const amount = Number(d?.amount ?? raw?.amount ?? d?.Amount ?? 0);
-    const offers = await loadOffers(supabaseAdmin);
-    const duration = calculateProportionalDuration(amount, offers);
-
-    const id = crypto.randomUUID();
-    const userId = data.deviceId || id;
-
-    if (duration.isUnderpaid) {
-      const underpaidTxn: Txn = {
-        id,
-        ref: receipt,
-        phone,
-        amount,
-        passId: duration.passId,
-        at: Date.now(),
-        status: 'Underpaid',
-        mode: 'Live',
-      };
-      await supabaseAdmin.from('gn_transactions').insert({ id, user_id: userId, payload: JSON.parse(JSON.stringify(underpaidTxn)) });
-      throw new Error(`Payment of KES ${amount} is below the minimum required KES ${duration.minAmount}. Recorded as underpaid.`);
-    }
-
-    const activeTxn: Txn = {
-      id,
-      ref: receipt,
-      phone,
-      amount,
-      passId: duration.passId,
-      at: Date.now(),
-      status: 'Activated',
-      mode: 'Live',
-    };
-    await supabaseAdmin.from('gn_transactions').insert({ id, user_id: userId, payload: JSON.parse(JSON.stringify(activeTxn)) });
-
-    const now = Date.now();
-    const companionPin = generateCompanionPin();
-    const session: Session = {
-      id,
-      phone,
-      passId: duration.passId,
-      totalMs: duration.totalMs,
-      remainingMs: duration.totalMs,
-      lastTick: now,
-      online: true,
-      startedAt: now,
-      companionPin,
-    };
-
-    await supabaseAdmin.from('gn_sessions').upsert({
-      id,
-      user_id: userId,
-      payload: JSON.parse(JSON.stringify({
-        ...session,
-        bound_device_id: data.deviceId || null,
-        companion_pin: companionPin,
-        paired_companion_id: null,
-      })),
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'id' });
-
-    return { ok: true, session, amount, hours: duration.hours };
   });
 
 /**

@@ -175,6 +175,17 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const [cfg] = useConfig();
   const [offers] = useOffers();
   const [passId, setPassId] = useState<string>(offers[0]?.id || "p30");
+
+  useEffect(() => {
+    if (offers && offers.length > 0) {
+      if (!offers.some((o) => o.id === passId)) {
+        const first = offers[0];
+        if (first?.id) {
+          setPassId(first.id);
+        }
+      }
+    }
+  }, [offers, passId]);
   const [phone, setPhone] = useState(() => getPersistedPhone() || "");
   const [busy, setBusy] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== "undefined" ? navigator.onLine : true));

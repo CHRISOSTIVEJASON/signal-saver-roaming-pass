@@ -50,10 +50,12 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       const local = read<Session[]>(KEYS.sessions, []);
       write(KEYS.sessions, local.filter((s) => s.id !== wipeTarget.id && normalizePhone(s.phone) !== normalizePhone(wipeTarget.phone)));
       const active = read<Session | null>(KEYS.active, null);
+      let wasAdminActive = false;
       if (active && (active.id === wipeTarget.id || normalizePhone(active.phone) === normalizePhone(wipeTarget.phone))) {
         write(KEYS.active, null);
+        wasAdminActive = true;
       }
-      if (Capacitor.isNativePlatform()) {
+      if (wasAdminActive && Capacitor.isNativePlatform()) {
         void GlobalRelay.stop().catch(() => {});
       }
       window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.sessions }));
@@ -73,9 +75,10 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       const res = await wipeAllSessionsFn();
       setCloudSessions([]);
       setLocalSessions([]);
+      const wasAdminActive = Boolean(read<Session | null>(KEYS.active, null));
       write(KEYS.sessions, []);
       write(KEYS.active, null);
-      if (Capacitor.isNativePlatform()) {
+      if (wasAdminActive && Capacitor.isNativePlatform()) {
         void GlobalRelay.stop().catch(() => {});
       }
       window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.sessions }));
@@ -126,10 +129,11 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       const updatedLocalSess = localSess.map((s) => (s.id === sessionId ? { ...s, frozen: freeze, online: freeze ? false : s.online } : s));
       write(KEYS.sessions, updatedLocalSess);
       const activeSess = read<Session | null>(KEYS.active, null);
-      if (activeSess && activeSess.id === sessionId) {
+      const isTargetActiveLocal = activeSess && activeSess.id === sessionId;
+      if (isTargetActiveLocal) {
         write(KEYS.active, { ...activeSess, frozen: freeze, online: freeze ? false : activeSess.online });
       }
-      if (freeze && Capacitor.isNativePlatform()) {
+      if (freeze && isTargetActiveLocal && Capacitor.isNativePlatform()) {
         void GlobalRelay.stop().catch(() => {});
       }
       window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.sessions }));
@@ -993,6 +997,7 @@ function OffersCard() {
       await saveOffersCloud({ data: { offers: updated } });
       setOffers(updated);
       write(KEYS.offers, updated);
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.offers }));
       cancelEdit();
       toast.success("Offers updated and synced across all customer phones!");
     } catch (err: any) {
@@ -1013,6 +1018,7 @@ function OffersCard() {
       await saveOffersCloud({ data: { offers: updated } });
       setOffers(updated);
       write(KEYS.offers, updated);
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.offers }));
       toast.success("Offer removed.");
     } catch (err: any) {
       toast.error(err?.message || "Failed to delete offer");
@@ -1545,6 +1551,7 @@ function PoolManager() {
       const nextNetworks = [network, ...networks];
       setNetworks(nextNetworks);
       void saveShared(KEYS.networks, nextNetworks).catch(() => {});
+      void pushNetworks({ data: { networks: [network] } }).catch(() => {});
       setVenue("");
       setManualSsid("");
       setManualBssid("");
@@ -1668,11 +1675,13 @@ function PoolManager() {
                       onClick={() => {
                         const newPass = window.prompt(`Enter WPA2 password for ${n.ssid}:`, n.password || "");
                         if (newPass !== null) {
+                          const changedNet = { ...n, password: newPass.trim() || undefined };
                           const updated = networks.map((x) =>
-                            x.id === n.id ? { ...x, password: newPass.trim() || undefined } : x
+                            x.id === n.id ? changedNet : x
                           );
                           setNetworks(updated);
                           void saveShared(KEYS.networks, updated).catch(() => {});
+                          void pushNetworks({ data: { networks: [changedNet] } }).catch(() => {});
                           resolveNetworkAlert(n.ssid);
                           toast.success(`Password for ${n.ssid} saved!`);
                         }

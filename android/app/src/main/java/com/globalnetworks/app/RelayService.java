@@ -49,6 +49,11 @@ public class RelayService extends Service {
     private ServerSocket serverSocket;
     // High-speed in-memory DNS cache for UDP/QUIC streams (e.g. TikTok, YouTube HTTP/3 over UDP port 443)
     private static final java.util.concurrent.ConcurrentHashMap<String, CachedDns> udpDnsCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static volatile Network lastUpstreamNetwork = null;
+
+    public static void clearDnsCache() {
+        udpDnsCache.clear();
+    }
 
     private static class CachedDns {
         final InetAddress address;
@@ -80,7 +85,7 @@ public class RelayService extends Service {
             } catch (Exception ignored) {}
         }
         if (resolved != null) {
-            udpDnsCache.put(domain, new CachedDns(resolved, 10 * 60 * 1000L)); // 10 minutes cache
+            udpDnsCache.put(domain, new CachedDns(resolved, 30 * 1000L)); // 30s fast cache
         }
         return resolved;
     }
@@ -248,21 +253,30 @@ public class RelayService extends Service {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return null;
 
+        Network current = null;
         for (Network net : cm.getAllNetworks()) {
             NetworkCapabilities caps = cm.getNetworkCapabilities(net);
             if (caps != null &&
                 caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                 caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
-                return net;
+                current = net;
+                break;
             }
         }
-        for (Network net : cm.getAllNetworks()) {
-            NetworkCapabilities caps = cm.getNetworkCapabilities(net);
-            if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                return net;
+        if (current == null) {
+            for (Network net : cm.getAllNetworks()) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(net);
+                if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    current = net;
+                    break;
+                }
             }
         }
-        return null;
+        if (current != null && !current.equals(lastUpstreamNetwork)) {
+            lastUpstreamNetwork = current;
+            clearDnsCache();
+        }
+        return current;
     }
 
     private void handleConnection(Socket client) {
@@ -677,6 +691,7 @@ public class RelayService extends Service {
 
     private synchronized void stopRouter() {
         routerRunning.set(false);
+        clearDnsCache();
         if (serverSocket != null) {
             try { serverSocket.close(); } catch (Exception ignored) {}
             serverSocket = null;

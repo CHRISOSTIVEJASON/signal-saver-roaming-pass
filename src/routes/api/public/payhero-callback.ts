@@ -13,8 +13,14 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
         const externalRef = String(r.ExternalReference ?? r.external_reference ?? raw.external_reference ?? '').trim();
         const checkoutId = String(r.CheckoutRequestID ?? r.checkout_request_id ?? raw.CheckoutRequestID ?? '').trim();
         const ref = String(r.Reference ?? r.reference ?? r.MpesaReceiptNumber ?? r.mpesa_reference ?? raw.Reference ?? raw.reference ?? '').trim();
+        const billRef = String(r.BillRefNumber ?? r.billrefnumber ?? r.bill_ref_number ?? r.AccountNumber ?? r.account_number ?? r.accountNumber ?? r.Account ?? r.account ?? raw.BillRefNumber ?? raw.account_number ?? '').trim();
 
-        const refs = [externalRef, checkoutId, ref].filter(Boolean);
+        let ticketPart = '';
+        if (billRef.includes('#')) {
+          ticketPart = billRef.split('#')[1]?.trim() || '';
+        }
+
+        const refs = [externalRef, checkoutId, ref, billRef, ticketPart].filter(Boolean);
         const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
         const { confirmTxn, loadOffers } = await import('@/lib/payments.server');
 
@@ -23,12 +29,13 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
           const { data: rows } = await supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(300);
           const row = (rows || []).find((t) => {
             const p = t.payload as any;
-            return p && (
+            if (!p) return false;
+            return (
               refs.includes(p.ref) ||
               refs.includes(p.externalRef) ||
               refs.includes(p.id) ||
               refs.includes(p.checkoutRequestId) ||
-              (p.accountNumber && refs.some((r: string) => p.accountNumber.includes(r)))
+              (p.accountNumber && refs.some((rStr: string) => rStr && (p.accountNumber.toUpperCase().includes(rStr.toUpperCase()) || rStr.toUpperCase().includes(p.accountNumber.toUpperCase()))))
             );
           });
           if (row) {
@@ -106,13 +113,17 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
               },
             });
 
-            // Attempt to bind to device that recently attempted payment or queried for this phone
+            // Attempt to bind to device that recently attempted payment or queried for this phone or ticket
             let boundDeviceId: string | null = null;
             try {
               const { data: recentRows } = await supabaseAdmin.from('gn_transactions').select('payload').order('created_at', { ascending: false }).limit(50);
               const matched = (recentRows || []).find((t: any) => {
                 const p = t?.payload;
-                return p && normalizePhone(p.phone || '') === phone && p.deviceId;
+                if (!p || !p.deviceId) return false;
+                if (normalizePhone(p.phone || '') === phone) return true;
+                if (billRef && p.accountNumber && (p.accountNumber.includes(billRef) || billRef.includes(p.accountNumber))) return true;
+                if (ticketPart && p.accountNumber && p.accountNumber.includes(ticketPart)) return true;
+                return false;
               });
               if (matched) boundDeviceId = (matched.payload as any).deviceId;
             } catch {}
