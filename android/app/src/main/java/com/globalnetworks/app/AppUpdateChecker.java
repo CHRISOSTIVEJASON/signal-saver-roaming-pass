@@ -28,6 +28,7 @@ import java.util.concurrent.Executors;
 
 /**
  * Checks for updates on app launch via Supabase gn_settings and prompts user to install.
+ * Supports both mandatory (blocking, no skip) and optional update modes.
  */
 public final class AppUpdateChecker {
     private static final String TAG = "AppUpdateChecker";
@@ -55,8 +56,8 @@ public final class AppUpdateChecker {
                 conn.setRequestProperty("apikey", SUPABASE_KEY);
                 conn.setRequestProperty("Authorization", "Bearer " + SUPABASE_KEY);
                 conn.setRequestProperty("User-Agent", "Signal-Saver-Roaming-Pass-Android");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
 
                 if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) {
                     Log.w(TAG, "Update check returned HTTP " + conn.getResponseCode());
@@ -91,7 +92,8 @@ public final class AppUpdateChecker {
                 if (isNewer || (updateRequired && !latestVersion.isEmpty() && !latestVersion.equals(currentVersion))) {
                     final String targetUrl = apkUrl;
                     final boolean mandatory = updateRequired;
-                    MAIN.post(() -> showUpdateDialog(activity, targetUrl, mandatory));
+                    final String remoteVer = latestVersion;
+                    MAIN.post(() -> showUpdateDialog(activity, targetUrl, mandatory, remoteVer));
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Update check failed", e);
@@ -120,25 +122,36 @@ public final class AppUpdateChecker {
         return false;
     }
 
-    private static void showUpdateDialog(final Activity activity, final String downloadUrl, final boolean mandatory) {
+    private static void showUpdateDialog(final Activity activity, final String downloadUrl, final boolean mandatory, final String version) {
         if (activity == null || activity.isFinishing()) return;
 
         AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-        builder.setTitle(mandatory ? "Update Required" : "Update Available");
-        builder.setMessage("A new version of Signal Saver / Global Networks is available. Would you like to update now?");
-        builder.setCancelable(!mandatory);
-        builder.setPositiveButton("Update Now", (dialog, which) -> downloadAndInstall(activity, downloadUrl));
-        if (!mandatory) {
-            builder.setNegativeButton("Later", null);
+        if (mandatory) {
+            builder.setTitle("Mandatory Update Required");
+            builder.setMessage("A critical update (" + (version.isEmpty() ? "latest version" : "v" + version) + ") is required to continue using Global Networks. Please update now to proceed.");
+            builder.setCancelable(false);
+            builder.setPositiveButton("Update Now", (dialog, which) -> downloadAndInstall(activity, downloadUrl, true));
+            builder.setNeutralButton("Download in Browser", (dialog, which) -> openInBrowser(activity, downloadUrl));
+            builder.setNegativeButton("Exit App", (dialog, which) -> activity.finishAffinity());
+        } else {
+            builder.setTitle("Update Available");
+            builder.setMessage("A new version (" + (version.isEmpty() ? "latest" : "v" + version) + ") of Global Networks is available. Would you like to update now?");
+            builder.setCancelable(true);
+            builder.setPositiveButton("Update Now", (dialog, which) -> downloadAndInstall(activity, downloadUrl, false));
+            builder.setNeutralButton("Browser", (dialog, which) -> openInBrowser(activity, downloadUrl));
+            builder.setNegativeButton("Continue to App", null);
         }
+
         AlertDialog dialog = builder.create();
         dialog.setCanceledOnTouchOutside(!mandatory);
         dialog.show();
     }
 
-    private static void downloadAndInstall(final Activity activity, final String downloadUrl) {
+    private static void downloadAndInstall(final Activity activity, final String downloadUrl, final boolean mandatory) {
+        if (activity == null || activity.isFinishing()) return;
+
         ProgressDialog progress = new ProgressDialog(activity);
-        progress.setTitle("Downloading Update");
+        progress.setTitle(mandatory ? "Mandatory Update" : "Downloading Update");
         progress.setMessage("Downloading latest APK, please wait...");
         progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
         progress.setMax(100);
@@ -152,11 +165,12 @@ public final class AppUpdateChecker {
                 URL url = new URL(downloadUrl);
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestProperty("User-Agent", "Signal-Saver-Roaming-Pass-Android");
-                conn.setConnectTimeout(15000);
-                conn.setReadTimeout(30000);
+                conn.setRequestProperty("Accept", "*/*");
+                conn.setConnectTimeout(20000);
+                conn.setReadTimeout(45000);
                 conn.setInstanceFollowRedirects(true);
 
-                // Explicitly follow HTTP -> HTTPS / CDN redirects (e.g. GitHub releases to AWS S3/Azure Blob CDN)
+                // Explicitly follow HTTP -> HTTPS / CDN redirects (e.g. GitHub releases to Azure Blob CDN)
                 int redirects = 0;
                 while (redirects < 5) {
                     int status = conn.getResponseCode();
@@ -168,8 +182,9 @@ public final class AppUpdateChecker {
                             url = new URL(newLocation);
                             conn = (HttpURLConnection) url.openConnection();
                             conn.setRequestProperty("User-Agent", "Signal-Saver-Roaming-Pass-Android");
-                            conn.setConnectTimeout(15000);
-                            conn.setReadTimeout(30000);
+                            conn.setRequestProperty("Accept", "*/*");
+                            conn.setConnectTimeout(20000);
+                            conn.setReadTimeout(45000);
                             redirects++;
                             continue;
                         }
@@ -210,18 +225,40 @@ public final class AppUpdateChecker {
                 Log.e(TAG, "Download failed", e);
                 MAIN.post(() -> {
                     dismiss(progress);
-                    if (!activity.isFinishing()) {
-                        new AlertDialog.Builder(activity)
-                                .setTitle("Update Notice")
-                                .setMessage("Could not complete APK download: " + e.getMessage() + "\n\nYou can retry or continue to the app.")
+                    if (activity.isFinishing()) return;
+
+                    AlertDialog.Builder errBuilder = new AlertDialog.Builder(activity);
+                    if (mandatory) {
+                        errBuilder.setTitle("Update Download Failed")
+                                .setMessage("Could not download update: " + e.getMessage() + "\n\nAn update is mandatory. Please retry or download via browser.")
+                                .setCancelable(false)
+                                .setPositiveButton("Retry", (d, w) -> downloadAndInstall(activity, downloadUrl, true))
+                                .setNeutralButton("Download via Browser", (d, w) -> openInBrowser(activity, downloadUrl))
+                                .setNegativeButton("Exit App", (d, w) -> activity.finishAffinity());
+                    } else {
+                        errBuilder.setTitle("Download Failed")
+                                .setMessage("Could not complete APK download: " + e.getMessage() + "\n\nYou can retry, download via browser, or continue to the app.")
                                 .setCancelable(true)
-                                .setPositiveButton("Retry", (d, w) -> downloadAndInstall(activity, downloadUrl))
-                                .setNegativeButton("Continue to App", null)
-                                .show();
+                                .setPositiveButton("Retry", (d, w) -> downloadAndInstall(activity, downloadUrl, false))
+                                .setNeutralButton("Download via Browser", (d, w) -> openInBrowser(activity, downloadUrl))
+                                .setNegativeButton("Continue to App", null);
                     }
+                    AlertDialog errDialog = errBuilder.create();
+                    errDialog.setCanceledOnTouchOutside(!mandatory);
+                    errDialog.show();
                 });
             }
         });
+    }
+
+    private static void openInBrowser(Context context, String downloadUrl) {
+        try {
+            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl));
+            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(browserIntent);
+        } catch (Exception ex) {
+            Log.e(TAG, "Failed to open browser for APK download", ex);
+        }
     }
 
     private static void dismiss(ProgressDialog dialog) {
