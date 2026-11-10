@@ -119,7 +119,7 @@ export function NativeBridge() {
     return () => {
       disposed = true;
       clearInterval(timer);
-      void listener.then((handle) => handle.remove());
+      void listener.then((handle) => handle?.remove?.()).catch(() => {});
     };
   }, []);
 

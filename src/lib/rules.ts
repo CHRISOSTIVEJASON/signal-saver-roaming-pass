@@ -23,7 +23,8 @@ export function getPass(id: string, customPasses?: PassOffer[]) {
 }
 
 /** Normalises Safaricom numbers (07.. / 01.. / 2547.. / +2541..) to 2547XXXXXXXX. Returns null if invalid. */
-export function normalizePhone(input: string): string | null {
+export function normalizePhone(input?: string | null): string | null {
+  if (!input || typeof input !== "string") return null;
   const d = input.replace(/\D/g, "");
   let local = "";
   if (/^0[17]\d{8}$/.test(d)) local = d.slice(1);
@@ -48,7 +49,8 @@ export function tick(remainingMs: number, lastTick: number, now: number, online:
   return Math.max(0, remainingMs - Math.max(0, now - lastTick));
 }
 
-export function formatClock(ms: number) {
+export function formatClock(ms?: number | null) {
+  if (typeof ms !== "number" || isNaN(ms) || ms <= 0) return "00:00:00";
   const s = Math.floor(ms / 1000);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -61,34 +63,34 @@ export const APP_VERSION = "1.0.8";
 export type WifiState = "pool" | "personal" | "searching";
 /** Pool Wi-Fi drains the pass; the user's own saved Wi-Fi never does; anything else freezes it. */
 export function connectionState(
-  current: { ssid: string; bssid: string } | null,
+  current: { ssid?: string | null; bssid?: string | null } | null,
   poolBssids: string[],
   personalSsids: string[],
   poolSsids?: string[],
 ): WifiState {
   if (!current) return "searching";
-  const currentBssid = current.bssid?.toUpperCase().trim();
-  const currentSsid = current.ssid?.toLowerCase().trim();
+  const currentBssid = current.bssid ? current.bssid.toUpperCase().trim() : "";
+  const currentSsid = current.ssid ? current.ssid.toLowerCase().trim() : "";
 
   // Match by hardware MAC (BSSID)
-  if (currentBssid && poolBssids.some((b) => b.toUpperCase().trim() === currentBssid)) {
+  if (currentBssid && Array.isArray(poolBssids) && poolBssids.some((b) => b && b.toUpperCase().trim() === currentBssid)) {
     return "pool";
   }
 
   // Match by network name (SSID) — allows multiple access points in the same school/hotspot sharing the same name to connect
-  if (currentSsid && poolSsids && poolSsids.some((s) => s.toLowerCase().trim() === currentSsid)) {
+  if (currentSsid && Array.isArray(poolSsids) && poolSsids.some((s) => s && s.toLowerCase().trim() === currentSsid)) {
     return "pool";
   }
 
   // User's personal saved networks
-  if (currentSsid && personalSsids.some((s) => s.toLowerCase().trim() === currentSsid)) {
+  if (currentSsid && Array.isArray(personalSsids) && personalSsids.some((s) => s && s.toLowerCase().trim() === currentSsid)) {
     return "personal";
   }
 
   return "searching";
 }
 
-const parts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
+const parts = (v?: string | null) => (typeof v === "string" ? v : "").split(".").map((n) => parseInt(n, 10) || 0);
 /** Update blocks only when marked required AND the latest version is newer than the installed one. */
 export function isUpdateRequired(installed: string, latest: string, required: boolean) {
   if (!required || !latest) return false;

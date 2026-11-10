@@ -7,7 +7,22 @@ const defaults = new Map<string, unknown>();
 const listeners = new Set<() => void>();
 let saver: ((key: string, value: unknown) => Promise<void>) | undefined;
 export const isSharedKey = (key: string) => shared.has(key);
-export function cached<T>(key: string, fallback: T): T { return (values.get(key) as T | undefined) ?? fallback; }
+export function cached<T>(key: string, fallback: T): T {
+  if (values.has(key)) {
+    return values.get(key) as T;
+  }
+  if (typeof window !== "undefined") {
+    try {
+      const v = localStorage.getItem(key);
+      if (v !== null) {
+        const parsed = JSON.parse(v);
+        values.set(key, parsed);
+        return parsed as T;
+      }
+    } catch {}
+  }
+  return fallback;
+}
 export function publishCache(key: string, value: unknown) {
   values.set(key, value);
   listeners.forEach((listener) => listener());

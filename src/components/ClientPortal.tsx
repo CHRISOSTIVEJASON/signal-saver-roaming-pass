@@ -86,6 +86,11 @@ function playWebThreeBeepTone() {
       osc.start(ctx.currentTime + startTime);
       osc.stop(ctx.currentTime + startTime + 0.35);
     });
+    setTimeout(() => {
+      try {
+        if (ctx.state !== "closed") void ctx.close();
+      } catch {}
+    }, 2500);
   } catch (_) {}
 }
 
@@ -488,8 +493,11 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     } catch (e: any) {
       updateTxn(currentTxnId, { status: "Failed" });
       const msg = String(e instanceof Error ? e.message : e || "");
-      void fetchDynamicAccount(msisdn, pass.id);
-      setPaybillFallbackOpen(true);
+      const isBlockedOrActive = msg.toLowerCase().includes("blocked") || msg.toLowerCase().includes("already have an active pass");
+      if (!isBlockedOrActive) {
+        void fetchDynamicAccount(msisdn, pass.id);
+        setPaybillFallbackOpen(true);
+      }
       toast.error(msg || "Could not push STK. Redirecting to Paybill...", {
         duration: 3000,
         position: "top-center",
@@ -607,8 +615,8 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           <Button variant="outline" disabled={Boolean(busy)} key={p.id} onClick={() => setPassId(p.id)}
             className={`relative flex h-24 flex-col items-start gap-1 whitespace-normal rounded-lg border p-3 text-left transition ${passId === p.id ? "border-primary bg-primary/10 shadow-[0_0_24px_-6px_var(--primary)]" : "border-border bg-secondary/40 hover:border-accent/50"}`}>
             {p.popular && <span className="absolute -top-2.5 right-2 rounded-full bg-accent px-2 py-0.5 text-[10px] font-bold uppercase text-accent-foreground">Best Value</span>}
-            <div className="font-mono text-2xl font-bold"><span className="text-xs font-normal text-muted-foreground">KES </span>{p.amount}</div>
-            <div className="text-sm">{p.label}</div>
+            <span className="block font-mono text-2xl font-bold"><span className="text-xs font-normal text-muted-foreground">KES </span>{p.amount}</span>
+            <span className="block text-sm">{p.label}</span>
           </Button>
         ))}
       </div>
@@ -681,7 +689,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           <div className="space-y-2.5 pt-1 font-mono text-xs">
             <div className="rounded-lg border border-border bg-secondary/40 p-2.5">
               <span className="block text-[10px] text-muted-foreground uppercase font-sans font-medium">Linked Phone Number</span>
-              <span className="font-bold text-foreground text-sm font-mono mt-0.5 block">+{normalizePhone(phone) || phone}</span>
+              <span className="font-bold text-foreground text-sm font-mono mt-0.5 block">{phone.trim() ? `+${normalizePhone(phone) || phone}` : "—"}</span>
             </div>
 
             <div className="rounded-lg border border-border bg-secondary/40 p-2.5">
@@ -1145,7 +1153,6 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
         frozen: currentFrozen
       }));
       if (ref.current.online && !currentFrozen) recordRelayTick(ref.current.phone);
-      force((n) => n + 1);
     };
     step();
     const t = setInterval(step, 1000);

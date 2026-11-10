@@ -4,6 +4,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { publishCache, clearPrivateCache, registerCloudSaver } from '@/lib/cloud-cache';
 import { defaultConfig, KEYS, read, type Session, type Txn, type Network, type PayConfig } from '@/lib/store';
 import { savePaymentConfig, syncCloudNetworks, getCloudNetworks, getServiceStatus, getExemptedNumbers, getCloudOffers, getPoolNetworkPasswords } from '@/lib/cloud.functions';
+import { ensureUuid } from '@/lib/rules';
 import { getDeviceId } from '@/lib/store';
 import { write, defaultServiceStatus, DEFAULT_PASSES } from '@/lib/store';
 import type { MeshLink } from '@/lib/relay';
@@ -163,7 +164,7 @@ export function CloudSync() {
     });
 
     void refresh();
-    const channel = supabase.channel(`gn-sync-${crypto.randomUUID()}`).on('postgres_changes', { event: '*', schema: 'public' }, () => { void refresh(); }).subscribe();
+    const channel = supabase.channel(`gn-sync-${ensureUuid()}`).on('postgres_changes', { event: '*', schema: 'public' }, () => { void refresh(); }).subscribe();
     const { data: auth } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') clearPrivateCache();
       if (['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED'].includes(event)) setTimeout(() => { void refresh(); }, 0);

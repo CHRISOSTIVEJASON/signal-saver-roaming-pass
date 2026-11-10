@@ -164,3 +164,17 @@ describe("proportional payment duration & underpayment rules", () => {
     expect(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(fromEmpty)).toBe(true);
   });
 });
+
+describe("defensive runtime guards", () => {
+  it("handles nullish and invalid inputs gracefully without throwing", () => {
+    expect(normalizePhone(undefined)).toBeNull();
+    expect(normalizePhone(null)).toBeNull();
+    expect(normalizePhone("")).toBeNull();
+    expect(formatClock(NaN)).toBe("00:00:00");
+    expect(formatClock(null as any)).toBe("00:00:00");
+    expect(formatClock(-1000)).toBe("00:00:00");
+    expect(isUpdateRequired(undefined as any, null as any, true)).toBe(false);
+    expect(connectionState(null, [], [])).toBe("searching");
+    expect(connectionState({ ssid: null, bssid: null }, [null as any], [null as any])).toBe("searching");
+  });
+});

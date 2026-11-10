@@ -159,7 +159,7 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
     }
   }
 
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -209,6 +209,11 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const displayTxns = activeOnly ? txns.filter(isTxnActive) : txns;
 
   const [tab, setTab] = useState<"pool" | "roam" | "pay" | "set">("set");
+  useEffect(() => {
+    if (tab !== "roam") return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [tab]);
   const tabs = [
     { id: "pool", label: "Wi-Fi Pool", icon: <Wifi className="h-4 w-4" /> },
     { id: "roam", label: "Live Roaming", icon: <Radio className="h-4 w-4" /> },
