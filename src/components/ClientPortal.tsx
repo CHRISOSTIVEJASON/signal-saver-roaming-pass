@@ -625,6 +625,24 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
 
+        <div className="text-center pt-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              const msisdn = normalizePhone(phone);
+              if (!msisdn) {
+                toast.error("Enter a valid Safaricom number (07… or 01…) first");
+                return;
+              }
+              void fetchDynamicAccount(msisdn, pass.id);
+              setPaybillFallbackOpen(true);
+            }}
+            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4 transition-colors cursor-pointer"
+          >
+            Having trouble receiving STK? Pay via Paybill
+          </button>
+        </div>
+
 
         <div className="grid grid-cols-1 gap-2 pt-2 min-[380px]:grid-cols-2">
           <Button
@@ -652,11 +670,11 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         <DialogContent className="max-w-sm p-5 space-y-3">
           <DialogHeader className="space-y-1 text-left">
             <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-warning" />
-              FAILED TO PUSH STK?
+              <CreditCard className="h-4 w-4 text-primary" />
+              Pay via Paybill
             </DialogTitle>
-            <p className="text-xs font-semibold text-primary uppercase font-mono tracking-wide">
-              PROCEED WITH PAYBILL:
+            <p className="text-xs text-muted-foreground">
+              Pay manually via Lipa na M-Pesa. Your pass activates automatically once payment is received.
             </p>
           </DialogHeader>
 
@@ -724,6 +742,14 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
             </div>
 
 
+
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 text-[11px] font-sans text-muted-foreground leading-relaxed">
+              <span className="font-semibold text-primary block mb-0.5">Quick Steps:</span>
+              1. Open M-Pesa &gt; Lipa na M-Pesa &gt; Pay Bill<br />
+              2. Enter Business No: <strong className="text-foreground font-mono">{MANUAL_PAYBILL}</strong><br />
+              3. Enter Account No: <strong className="text-foreground font-mono">{dynamicAccount}</strong><br />
+              4. Enter Amount: <strong className="text-foreground font-mono">KES {pass.amount}</strong> &amp; enter PIN
+            </div>
 
             <div className="pt-2">
               <Button
