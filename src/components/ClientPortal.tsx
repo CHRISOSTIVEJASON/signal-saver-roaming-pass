@@ -220,16 +220,20 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
 
   const fetchDynamicAccount = async (targetPhone: string, targetPassId: string) => {
     const msisdn = normalizePhone(targetPhone);
-    if (!msisdn) return;
+    if (!msisdn) {
+      toast.error("Please enter your M-Pesa phone number above first");
+      return;
+    }
     setTicketLoading(true);
     try {
       const res = await getDynamicTicket({ data: { phone: msisdn, passId: targetPassId, deviceId: getDeviceId() } });
       if (res?.accountNumber) {
         setDynamicAccount(res.accountNumber);
         setTicketId(res.ticketNumber || "");
+        toast.success("Dynamic Paybill account generated");
       }
-    } catch {
-      // Keep static fallback
+    } catch (err: any) {
+      toast.error(err instanceof Error ? err.message : "Could not generate dynamic ticket");
     } finally {
       setTicketLoading(false);
     }
@@ -626,7 +630,12 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           <button
             type="button"
             onClick={() => {
-              void fetchDynamicAccount(phone, pass.id);
+              const msisdn = normalizePhone(phone);
+              if (!msisdn) {
+                toast.error("Please enter your M-Pesa phone number above first");
+                return;
+              }
+              void fetchDynamicAccount(msisdn, pass.id);
               setPaybillFallbackOpen(true);
             }}
             className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4"
@@ -670,6 +679,11 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
 
           <div className="space-y-2.5 pt-1 font-mono text-xs">
             <div className="rounded-lg border border-border bg-secondary/40 p-2.5">
+              <span className="block text-[10px] text-muted-foreground uppercase font-sans font-medium">Linked Phone Number</span>
+              <span className="font-bold text-foreground text-sm font-mono mt-0.5 block">+{normalizePhone(phone) || phone}</span>
+            </div>
+
+            <div className="rounded-lg border border-border bg-secondary/40 p-2.5">
               <span className="block text-[10px] text-muted-foreground uppercase font-sans font-medium">Business No (Paybill)</span>
               <div className="flex items-center justify-between mt-1">
                 <span className="font-bold text-foreground text-base tracking-wider">{MANUAL_PAYBILL}</span>
@@ -691,10 +705,17 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
                 <span className="block text-[10px] text-muted-foreground uppercase font-sans font-medium">Account Number</span>
                 <button
                   type="button"
-                  onClick={() => fetchDynamicAccount(phone, pass.id)}
-                  disabled={ticketLoading || !normalizePhone(phone)}
-                  className="text-[10px] text-primary hover:underline font-sans disabled:opacity-50"
-                  title="Generate new CheckoutRequestID"
+                  onClick={() => {
+                    const msisdn = normalizePhone(phone);
+                    if (!msisdn) {
+                      toast.error("Enter your phone number first");
+                      return;
+                    }
+                    void fetchDynamicAccount(msisdn, pass.id);
+                  }}
+                  disabled={ticketLoading}
+                  className="text-[10px] text-primary hover:underline font-sans disabled:opacity-50 font-semibold"
+                  title="Generate new dynamic Account #"
                 >
                   {ticketLoading ? "Generating..." : "Refresh #"}
                 </button>
