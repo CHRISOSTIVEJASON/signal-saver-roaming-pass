@@ -116,3 +116,80 @@ export function shouldAlertNetwork(lastAlertTime: number, now: number, cooldownM
 export function shouldPromptMobileData(isOnline: boolean, failedDueToNetwork = false): boolean {
   return !isOnline || failedDueToNetwork;
 }
+
+export const MANUAL_PAYBILL = "756756";
+export const MANUAL_ACCOUNT = "553125#13205";
+
+export type ProportionalDuration = {
+  isUnderpaid: boolean;
+  minAmount: number;
+  totalMs: number;
+  hours: number;
+  passId: string;
+  rateHoursPerKes: number;
+};
+
+/**
+ * Calculates pass duration proportionally for any payment amount:
+ * - If amount < minAmount (underpayment): records as underpaid, grants 0 ms (no internet).
+ * - If amount matches an exact pass offer: grants exact pass hours.
+ * - If amount is an extra amount or any amount >= minAmount: calculates proportional duration
+ *   based on the qualified tier rate and rounds to the nearest second/minute for the countdown timer.
+ */
+export function calculateProportionalDuration(
+  amount: number,
+  customPasses?: PassOffer[],
+  preferredPassId?: string
+): ProportionalDuration {
+  const pool = customPasses && customPasses.length > 0 ? customPasses : DEFAULT_PASSES;
+  const sorted = [...pool].sort((a, b) => a.amount - b.amount);
+  const fallback = DEFAULT_PASSES[0]!;
+  const minOffer = sorted[0] ?? fallback;
+  const minAmount = minOffer.amount;
+
+  if (amount <= 0 || amount < minAmount) {
+    return {
+      isUnderpaid: true,
+      minAmount,
+      totalMs: 0,
+      hours: 0,
+      passId: preferredPassId || minOffer.id,
+      rateHoursPerKes: 0,
+    };
+  }
+
+  const exact = pool.find((p) => p.amount === amount);
+  if (exact) {
+    const totalMs = Math.round(exact.hours * 3600) * 1000;
+    return {
+      isUnderpaid: false,
+      minAmount,
+      totalMs,
+      hours: exact.hours,
+      passId: exact.id,
+      rateHoursPerKes: exact.hours / exact.amount,
+    };
+  }
+
+  let baseTier: PassOffer = sorted[0] ?? fallback;
+  for (const tier of sorted) {
+    if (amount >= tier.amount) {
+      baseTier = tier;
+    }
+  }
+
+  const rate = baseTier.hours / baseTier.amount;
+  const rawHours = amount * rate;
+  const totalSeconds = Math.round(rawHours * 3600);
+  const totalMs = totalSeconds * 1000;
+  const roundedHours = Number((totalSeconds / 3600).toFixed(4));
+
+  return {
+    isUnderpaid: false,
+    minAmount,
+    totalMs,
+    hours: roundedHours,
+    passId: baseTier.id,
+    rateHoursPerKes: rate,
+  };
+}

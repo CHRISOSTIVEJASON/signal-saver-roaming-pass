@@ -85,3 +85,69 @@ describe("mobile data smart prompt check", () => {
     expect(shouldPromptMobileData(true, true)).toBe(true);
   });
 });
+
+import { calculateProportionalDuration, MANUAL_PAYBILL, MANUAL_ACCOUNT, formatClock } from "@/lib/rules";
+
+describe("proportional payment duration & underpayment rules", () => {
+  it("exports the required Paybill and Account numbers", () => {
+    expect(MANUAL_PAYBILL).toBe("756756");
+    expect(MANUAL_ACCOUNT).toBe("553125#13205");
+  });
+
+  it("records payments less than the minimum offer as underpaid without granting internet", () => {
+    const under5 = calculateProportionalDuration(5);
+    expect(under5.isUnderpaid).toBe(true);
+    expect(under5.totalMs).toBe(0);
+    expect(under5.hours).toBe(0);
+    expect(under5.minAmount).toBe(10);
+
+    const under9 = calculateProportionalDuration(9);
+    expect(under9.isUnderpaid).toBe(true);
+    expect(under9.totalMs).toBe(0);
+
+    const zero = calculateProportionalDuration(0);
+    expect(zero.isUnderpaid).toBe(true);
+    expect(zero.totalMs).toBe(0);
+  });
+
+  it("calculates exact hours for standard pass amounts (KES 10 and KES 18)", () => {
+    const p10 = calculateProportionalDuration(10);
+    expect(p10.isUnderpaid).toBe(false);
+    expect(p10.hours).toBe(15);
+    expect(p10.totalMs).toBe(15 * 3600 * 1000);
+    expect(formatClock(p10.totalMs)).toBe("15:00:00");
+
+    const p18 = calculateProportionalDuration(18);
+    expect(p18.isUnderpaid).toBe(false);
+    expect(p18.hours).toBe(30);
+    expect(p18.totalMs).toBe(30 * 3600 * 1000);
+    expect(formatClock(p18.totalMs)).toBe("30:00:00");
+  });
+
+  it("calculates proportional time rounded to nearest second for intermediate amounts (e.g. KES 15)", () => {
+    // 15 KES at baseline rate (15h / 10 KES = 1.5 h/KES) -> 22.5 hours = 22h 30m 00s
+    const p15 = calculateProportionalDuration(15);
+    expect(p15.isUnderpaid).toBe(false);
+    expect(p15.hours).toBe(22.5);
+    expect(p15.totalMs).toBe(22.5 * 3600 * 1000);
+    expect(formatClock(p15.totalMs)).toBe("22:30:00");
+  });
+
+  it("calculates proportional time rounded to nearest second for extra amounts above highest tier", () => {
+    // 20 KES at tier 2 rate (30h / 18 KES = 1.66667 h/KES) -> 33.3333 hours = 33h 20m 00s
+    const p20 = calculateProportionalDuration(20);
+    expect(p20.isUnderpaid).toBe(false);
+    expect(formatClock(p20.totalMs)).toBe("33:20:00");
+
+    // 25 KES -> 41.6667 hours = 41h 40m 00s
+    const p25 = calculateProportionalDuration(25);
+    expect(p25.isUnderpaid).toBe(false);
+    expect(formatClock(p25.totalMs)).toBe("41:40:00");
+
+    // 36 KES -> exactly double tier 2 = 60 hours = 60h 00m 00s
+    const p36 = calculateProportionalDuration(36);
+    expect(p36.isUnderpaid).toBe(false);
+    expect(p36.hours).toBe(60);
+    expect(formatClock(p36.totalMs)).toBe("60:00:00");
+  });
+});

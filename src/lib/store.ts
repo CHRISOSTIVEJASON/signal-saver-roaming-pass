@@ -60,7 +60,10 @@ export type Txn = {
   passId: string;
   ref: string;
   at: number;
-  status: "Pending" | "Activated" | "Failed";
+  status: "Pending" | "Activated" | "Failed" | "Underpaid";
+  notes?: string;
+  durationHours?: number;
+  durationMs?: number;
   mode: "Live" | "Demo";
 };
 

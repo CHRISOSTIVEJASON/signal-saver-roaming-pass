@@ -1,4 +1,4 @@
-import { getPass, DEFAULT_PASSES, type PassOffer } from './rules';
+import { getPass, DEFAULT_PASSES, type PassOffer, calculateProportionalDuration } from './rules';
 import type { Session, Txn } from './store';
 import { getCompanionPin, generateCompanionPin } from './relay';
 import { getPayHeroAuthHeader } from './payhero-auth';
@@ -40,16 +40,36 @@ export async function activateTxn(db: Admin, txn: Txn, userId: string, deviceId?
     if (txn.status !== 'Activated') await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Activated' }) }).eq('id', txn.id);
     return existing.payload as unknown as Session;
   }
-  const pass = getPass(txn.passId, await loadOffers(db));
-  const now = Date.now(), totalMs = pass.hours * 3600_000;
+  const offers = await loadOffers(db);
+  const isExempted = (txn.mode as any) === 'Exempted';
+  const isDemoZero = txn.mode === 'Demo' && (txn.amount === undefined || txn.amount === 0);
+
+  let totalMs = 0;
+  let passId = txn.passId;
+
+  if (isExempted || isDemoZero) {
+    const pass = getPass(txn.passId, offers);
+    totalMs = pass.hours * 3600_000;
+    passId = pass.id;
+  } else {
+    const duration = calculateProportionalDuration(txn.amount, offers, txn.passId);
+    if (duration.isUnderpaid) {
+      await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Underpaid', notes: `Underpayment: KES ${txn.amount} received (minimum KES ${duration.minAmount})` }) }).eq('id', txn.id);
+      throw new Error(`Payment of KES ${txn.amount} is below the minimum pass amount of KES ${duration.minAmount}. No internet pass granted.`);
+    }
+    totalMs = duration.totalMs;
+    passId = duration.passId;
+  }
+
+  const now = Date.now();
   const companionPin = generateCompanionPin();
-  const session: Session = { id: txn.id, phone: txn.phone, passId: pass.id, totalMs, remainingMs: totalMs, lastTick: now, online: true, startedAt: now, companionPin };
+  const session: Session = { id: txn.id, phone: txn.phone, passId, totalMs, remainingMs: totalMs, lastTick: now, online: true, startedAt: now, companionPin };
   const { error } = await db.from('gn_sessions').upsert({
     id: txn.id, user_id: userId,
     payload: j({ ...session, bound_device_id: deviceId || null, companion_pin: companionPin, paired_companion_id: null }),
   }, { onConflict: 'id', ignoreDuplicates: true });
   if (error) throw new Error('Could not record your pass. Please try again.');
-  await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Activated' }) }).eq('id', txn.id);
+  await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Activated', passId }) }).eq('id', txn.id);
   return session;
 }
 

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck, WifiOff } from "lucide-react";
+import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck, WifiOff, CreditCard } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { toast } from "sonner";
-import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState } from "@/lib/rules";
+import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState, MANUAL_PAYBILL, MANUAL_ACCOUNT } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, useServiceStatus, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
-import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession } from "@/lib/cloud.functions";
+import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession, listenForBackgroundPayment, verifyManualPaymentReceipt } from "@/lib/cloud.functions";
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
@@ -209,6 +209,19 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const confirmPayment = useServerFn(confirmCloudPayment);
   const restorePass = useServerFn(restoreCloudPass);
   const pairCompanion = useServerFn(pairCompanionPass);
+  const checkBackgroundPayment = useServerFn(listenForBackgroundPayment);
+  const verifyReceipt = useServerFn(verifyManualPaymentReceipt);
+
+  const [manualReceipt, setManualReceipt] = useState("");
+  const [manualVerifying, setManualVerifying] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const copyManualField = (val: string, label: string) => {
+    navigator.clipboard?.writeText(val);
+    setCopiedField(label);
+    toast.success(`${label} copied to clipboard!`);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
 
   // Automated background catch-up: if this device/browser had an active pass before cache wipe,
   // recover it automatically without forcing the customer to pay again.
@@ -247,6 +260,82 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     void tryAutoCatchUp();
     return () => { cancelled = true; };
   }, [restorePass, onActivated]);
+
+  // Sharp background listener: automatically listens for incoming payments (STK or Manual Paybill 756756 / 553125#13205)
+  useEffect(() => {
+    if (existingSession && existingSession.remainingMs > 0) return;
+    const msisdn = normalizePhone(phone);
+    if (!msisdn) return;
+
+    let active = true;
+    let inFlight = false;
+
+    const check = async () => {
+      if (!active || inFlight || document.hidden || !navigator.onLine) return;
+      inFlight = true;
+      try {
+        const res = await checkBackgroundPayment({ data: { phone: msisdn, deviceId: getDeviceId() } });
+        if (!active) return;
+        if (res.status === "activated" && res.session) {
+          savePersistedPhone(msisdn);
+          if (Capacitor.isNativePlatform()) {
+            void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+            void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
+          }
+          onActivated(res.session);
+          toast.success(`Payment detected! Pass activated • ${formatClock(res.session.remainingMs)} running.`);
+        } else if (res.status === "underpaid") {
+          toast.error(res.message || "Payment is below minimum KES 10. No internet pass granted.", { id: "underpaid-alert" });
+        }
+      } catch (e) {
+        // Keep quiet on network blips
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const initialTimer = setTimeout(check, 2500);
+    const interval = setInterval(check, 4000);
+
+    return () => {
+      active = false;
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
+  }, [phone, existingSession?.remainingMs, checkBackgroundPayment, onActivated]);
+
+  async function handleVerifyReceipt(e: React.FormEvent) {
+    e.preventDefault();
+    const msisdn = normalizePhone(phone);
+    if (!msisdn) {
+      toast.error("Enter your phone number above first");
+      return;
+    }
+    const code = manualReceipt.trim();
+    if (!code) {
+      toast.error("Enter your M-Pesa receipt code (e.g. TL12345678)");
+      return;
+    }
+    setManualVerifying(true);
+    try {
+      const res = await verifyReceipt({ data: { phone: msisdn, receiptCode: code, deviceId: getDeviceId() } });
+      if (res.ok && res.session) {
+        savePersistedPhone(msisdn);
+        if (Capacitor.isNativePlatform()) {
+          void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
+        }
+        onActivated(res.session);
+        setManualReceipt("");
+        toast.success(`Payment verified! ${res.hours ? `${res.hours} hours` : "Pass"} activated.`);
+      }
+    } catch (err: any) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setManualVerifying(false);
+    }
+  }
+
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restorePhone, setRestorePhone] = useState("");
   const [restorePin, setRestorePin] = useState("");
@@ -529,6 +618,76 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
+
+        {/* Manual Lipa na M-Pesa Paybill Option (Independent Flow) */}
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-left space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <CreditCard className="h-3.5 w-3.5 text-primary" />
+              Pay via Paybill (Instant Detection)
+            </span>
+            <span className="text-[10px] rounded bg-primary/10 px-1.5 py-0.5 text-primary font-mono font-medium">
+              Sharp Listener Active
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+            <div className="rounded-lg border border-border bg-background/80 p-2">
+              <span className="block text-[10px] text-muted-foreground uppercase font-sans">Business No (Paybill)</span>
+              <div className="flex items-center justify-between mt-1">
+                <span className="font-bold text-foreground text-sm tracking-wide">{MANUAL_PAYBILL}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => copyManualField(MANUAL_PAYBILL, "Paybill")}
+                >
+                  {copiedField === "Paybill" ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border bg-background/80 p-2">
+              <span className="block text-[10px] text-muted-foreground uppercase font-sans">Account Number</span>
+              <div className="flex items-center justify-between mt-1">
+                <span className="font-bold text-foreground text-sm tracking-wide truncate">{MANUAL_ACCOUNT}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => copyManualField(MANUAL_ACCOUNT, "Account Number")}
+                >
+                  {copiedField === "Account Number" ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-muted-foreground leading-tight">
+            Pay any amount from KES 10. Extra amounts receive proportional time rounded to the second. Background listener connects you automatically!
+          </p>
+
+          <form onSubmit={handleVerifyReceipt} className="flex gap-1.5 pt-1">
+            <input
+              type="text"
+              placeholder="M-Pesa Receipt (e.g. TL123456)"
+              value={manualReceipt}
+              onChange={(e) => setManualReceipt(e.target.value)}
+              className="flex-1 h-8 rounded-md border border-input bg-background px-2.5 text-xs font-mono text-foreground uppercase placeholder:normal-case placeholder:text-muted-foreground"
+            />
+            <Button
+              type="submit"
+              size="sm"
+              variant="outline"
+              disabled={manualVerifying || !manualReceipt.trim()}
+              className="h-8 px-2.5 text-xs font-medium shrink-0"
+            >
+              {manualVerifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Verify Code"}
+            </Button>
+          </form>
+        </div>
         <div className="grid grid-cols-1 gap-2 pt-2 min-[380px]:grid-cols-2">
           <Button
             variant="outline"
