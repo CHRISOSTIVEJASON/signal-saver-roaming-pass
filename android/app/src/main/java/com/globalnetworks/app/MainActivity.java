@@ -51,7 +51,6 @@ public class MainActivity extends BridgeActivity {
         }
 
         checkAndRequestMandatoryPermissions();
-        AppUpdateChecker.checkForUpdates(this);
     }
 
     private void checkAndRequestMandatoryPermissions() {

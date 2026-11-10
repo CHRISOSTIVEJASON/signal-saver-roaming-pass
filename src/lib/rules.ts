@@ -58,7 +58,7 @@ export function formatClock(ms?: number | null) {
   return [h, m, sec].map((n) => String(n).padStart(2, "0")).join(":");
 }
 
-export const APP_VERSION = "1.0.8";
+export const APP_VERSION = "1.2.4";
 
 export type WifiState = "pool" | "personal" | "searching";
 /** Pool Wi-Fi drains the pass; the user's own saved Wi-Fi never does; anything else freezes it. */
