@@ -58,12 +58,33 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
 
         if (phone && amount > 0 && !isFailed) {
           const offers = await loadOffers(supabaseAdmin);
-          const duration = calculateProportionalDuration(amount, offers);
+          const twoHoursAgo = Date.now() - 2 * 3600_000;
+          
+          // Glitch 5 / Recommendation 4: Cumulative Underpayment Aggregation (Payment Ledger)
+          const { data: recentUnderpaid } = await supabaseAdmin
+            .from('gn_transactions')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(30);
+
+          const eligibleUnderpaid = (recentUnderpaid || []).filter((t: any) => {
+            const p = t?.payload;
+            if (!p || p.status !== 'Underpaid') return false;
+            const tp = normalizePhone(p.phone || '');
+            const matchesPhone = tp === phone;
+            const matchesBill = billRef && p.accountNumber && (p.accountNumber.includes(billRef) || billRef.includes(p.accountNumber));
+            const matchesTicket = ticketPart && p.accountNumber && p.accountNumber.includes(ticketPart);
+            return (matchesPhone || matchesBill || matchesTicket) && (p.at || 0) >= twoHoursAgo;
+          });
+
+          const priorAmount = eligibleUnderpaid.reduce((sum: number, t: any) => sum + (Number(t?.payload?.amount) || 0), 0);
+          const combinedAmount = amount + priorAmount;
+          const duration = calculateProportionalDuration(combinedAmount, offers);
           const txnId = crypto.randomUUID();
           const txnRef = ref || externalRef || ('PB' + txnId.replaceAll('-', '').slice(0, 10).toUpperCase());
 
           if (duration.isUnderpaid) {
-            // Record underpayment, do NOT grant internet
+            // Record underpayment with cumulative total note
             await supabaseAdmin.from('gn_transactions').insert({
               id: txnId,
               user_id: txnId,
@@ -71,15 +92,27 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
                 id: txnId,
                 ref: txnRef,
                 phone,
-                amount,
+                amount: combinedAmount,
                 passId: duration.passId,
                 at: Date.now(),
                 status: 'Underpaid',
                 mode: 'Live',
-                notes: `Underpayment of KES ${amount} (minimum KES ${duration.minAmount}). No internet pass granted.`,
+                notes: `Underpayment of KES ${amount} (cumulative KES ${combinedAmount} received; minimum KES ${duration.minAmount}). No internet pass granted.`,
               },
             });
           } else {
+            // Cumulative threshold met! Mark prior underpayments as aggregated
+            for (const up of eligibleUnderpaid) {
+              const p = up.payload as any;
+              await supabaseAdmin.from('gn_transactions').update({
+                payload: {
+                  ...p,
+                  status: 'Aggregated',
+                  notes: `Aggregated into payment ${txnId} (combined KES ${combinedAmount})`,
+                  aggregatedInto: txnId,
+                }
+              }).eq('id', up.id);
+            }
             // Grant access with exact proportional duration rounded to nearest second
             const now = Date.now();
             const { generateCompanionPin } = await import('@/lib/relay');

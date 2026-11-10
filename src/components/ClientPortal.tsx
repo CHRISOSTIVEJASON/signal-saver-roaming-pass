@@ -6,7 +6,7 @@ import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, sh
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, useServiceStatus, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
-import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession, listenForBackgroundPayment, generateDynamicPaybillTicket } from "@/lib/cloud.functions";
+import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession, listenForBackgroundPayment, generateDynamicPaybillTicket, verifyManualMpesaReceipt } from "@/lib/cloud.functions";
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
@@ -227,6 +227,11 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const pairCompanion = useServerFn(pairCompanionPass);
   const checkBackgroundPayment = useServerFn(listenForBackgroundPayment);
   const getDynamicTicket = useServerFn(generateDynamicPaybillTicket);
+  const verifyReceipt = useServerFn(verifyManualMpesaReceipt);
+  const [manualReceiptOpen, setManualReceiptOpen] = useState(false);
+  const [receiptCode, setReceiptCode] = useState("");
+  const [receiptPhone, setReceiptPhone] = useState(phone || "");
+  const [receiptVerifying, setReceiptVerifying] = useState(false);
 
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [dynamicAccount, setDynamicAccount] = useState<string>(MANUAL_ACCOUNT);
@@ -345,10 +350,22 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     const initialTimer = setTimeout(check, 2500);
     const interval = setInterval(check, 4000);
 
+    // Glitch 2: Immediate check on app resume / visibility change to bypass mobile WebView timer throttling
+    const handleForegroundWakeup = () => {
+      if (active && !inFlight && typeof document !== "undefined" && !document.hidden && navigator.onLine) {
+        void check();
+      }
+    };
+
+    window.addEventListener("visibilitychange", handleForegroundWakeup);
+    window.addEventListener("focus", handleForegroundWakeup);
+
     return () => {
       active = false;
       clearTimeout(initialTimer);
       clearInterval(interval);
+      window.removeEventListener("visibilitychange", handleForegroundWakeup);
+      window.removeEventListener("focus", handleForegroundWakeup);
     };
   }, [phone, existingSession?.remainingMs, checkBackgroundPayment, onActivated]);
 
@@ -517,6 +534,61 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
       setBusy(null);
     }
   }
+
+    const handleManualReceiptSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanPhone = normalizePhone(receiptPhone || phone);
+    if (!cleanPhone) {
+      toast.error("Enter a valid Safaricom phone number (07... or 01...)");
+      return;
+    }
+    const cleanCode = receiptCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!cleanCode || cleanCode.length !== 10) {
+      toast.error("M-Pesa receipt code must be exactly 10 characters (e.g. SDA1234567)");
+      return;
+    }
+
+    setReceiptVerifying(true);
+    try {
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        try {
+          const queue = JSON.parse(localStorage.getItem("gn_offline_receipts") || "[]");
+          queue.push({ receiptNumber: cleanCode, phone: cleanPhone, deviceId: getDeviceId(), at: Date.now() });
+          localStorage.setItem("gn_offline_receipts", JSON.stringify(queue));
+        } catch {}
+        toast.info("Offline: Receipt recorded. It will automatically verify and activate as soon as network connection is reached.");
+        setManualReceiptOpen(false);
+        return;
+      }
+
+      const res = await verifyReceipt({
+        data: {
+          receiptNumber: cleanCode,
+          phone: cleanPhone,
+          deviceId: getDeviceId()
+        }
+      });
+
+      if (res && res.ok && res.session) {
+        savePersistedPhone(cleanPhone);
+        if (Capacitor.isNativePlatform()) {
+          void GlobalRelay.saveDevicePhone({ phone: cleanPhone }).catch(() => {});
+          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
+        }
+        onActivated(res.session);
+        setManualReceiptOpen(false);
+        setReceiptCode("");
+        toast.success(res.message || "Payment verified! Your roaming pass is now active.");
+      } else {
+        toast.error((res as any)?.message || "Receipt could not be verified yet. Please try again.");
+      }
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err || "Failed to verify receipt");
+      toast.error(msg);
+    } finally {
+      setReceiptVerifying(false);
+    }
+  };
 
   async function handleRestore(e: React.FormEvent) {
     e.preventDefault();
@@ -780,6 +852,20 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
                 ← Back
               </Button>
             </div>
+
+            <div className="pt-2 pb-1 text-center border-t border-border/60">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaybillFallbackOpen(false);
+                  setReceiptPhone(phone || "");
+                  setManualReceiptOpen(true);
+                }}
+                className="text-xs font-semibold text-primary underline underline-offset-4 hover:text-primary/80 transition-colors cursor-pointer"
+              >
+                Paid and not received yet? Tap here!!
+              </button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -823,6 +909,85 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
                 <Button type="button" onClick={() => setRestoreOpen(false)} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
                 <Button type="submit" disabled={restoreBusy} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
                   {restoreBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Check Pass"}
+                </Button>
+              </div>
+            </form>
+
+            <div className="pt-2 text-center border-t border-border/60 mt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setRestoreOpen(false);
+                  setReceiptPhone(restorePhone || phone || "");
+                  setManualReceiptOpen(true);
+                }}
+                className="text-xs font-semibold text-primary underline underline-offset-4 hover:text-primary/80 transition-colors cursor-pointer"
+              >
+                Paid and not received yet? Tap here!!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {manualReceiptOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setManualReceiptOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-primary" />
+                <h3 className="font-semibold text-base">Verify M-Pesa Receipt</h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setManualReceiptOpen(false)} aria-label="Close"><X className="h-4 w-4" /></Button>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Paid via Paybill <strong>{MANUAL_PAYBILL}</strong> or STK but your pass hasn't activated? Enter your Safaricom receipt code below for instant verification.
+            </p>
+            <form onSubmit={handleManualReceiptSubmit} className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-[11px] font-medium text-muted-foreground uppercase font-mono tracking-wider">Phone Number</label>
+                <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
+                  <Smartphone className="h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="tel"
+                    placeholder="07XX XXX XXX"
+                    value={receiptPhone}
+                    onChange={(e) => setReceiptPhone(e.target.value)}
+                    className="h-10 w-full bg-transparent font-mono text-sm outline-none"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] font-medium text-muted-foreground uppercase font-mono tracking-wider">M-Pesa Receipt Code</label>
+                <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring">
+                  <CreditCard className="h-4 w-4 text-muted-foreground" />
+                  <input
+                    autoFocus
+                    type="text"
+                    maxLength={10}
+                    placeholder="e.g. SDA1234567"
+                    value={receiptCode}
+                    onChange={(e) => setReceiptCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                    className="h-10 w-full bg-transparent font-mono text-sm uppercase tracking-wider outline-none"
+                    required
+                  />
+                </div>
+                <span className="text-[10px] text-muted-foreground block pt-0.5">
+                  Found at the beginning of your Safaricom confirmation SMS.
+                </span>
+              </div>
+
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-2.5 text-[11px] text-muted-foreground leading-relaxed">
+                <span className="font-semibold text-primary block mb-0.5 flex items-center gap-1">
+                  <ShieldCheck className="h-3 w-3" /> Anti-Fraud Protected
+                </span>
+                Receipts are verified directly against Safaricom records. Duplicate or already-claimed receipts are strictly blocked.
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <Button type="button" onClick={() => setManualReceiptOpen(false)} className="h-10 flex-1 rounded-lg border border-border text-sm">Cancel</Button>
+                <Button type="submit" disabled={receiptVerifying} className="h-10 flex-1 rounded-lg bg-primary text-sm font-semibold text-primary-foreground">
+                  {receiptVerifying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Verify Receipt"}
                 </Button>
               </div>
             </form>

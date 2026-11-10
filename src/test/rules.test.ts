@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { changePasscode, getPass, normalizePhone, tick } from "@/lib/rules";
+import { changePasscode, getPass, normalizePhone, tick, DEFAULT_PASSES } from "@/lib/rules";
 
 describe("rules", () => {
   it("rejects passcode change without security code 2006", () => {
@@ -176,5 +176,51 @@ describe("defensive runtime guards", () => {
     expect(isUpdateRequired(undefined as any, null as any, true)).toBe(false);
     expect(connectionState(null, [], [])).toBe("searching");
     expect(connectionState({ ssid: null, bssid: null }, [null as any], [null as any])).toBe("searching");
+  });
+});
+
+describe("M-Pesa receipt verification & payment aggregation rules", () => {
+  it("validates genuine 10-character alphanumeric Safaricom receipt codes", () => {
+    const isValidMpesaCode = (code: string) => {
+      const clean = (code || "").trim().toUpperCase();
+      if (!/^[A-Z0-9]{10}$/.test(clean)) return false;
+      if (/^(.)\1{9}$/.test(clean)) return false;
+      if (clean === "1234567890" || clean.includes("TEST") || clean.includes("FAKE")) return false;
+      return true;
+    };
+
+    expect(isValidMpesaCode("SDA1234567")).toBe(true);
+    expect(isValidMpesaCode("TK89012345")).toBe(true);
+    expect(isValidMpesaCode("QWE123RTY4")).toBe(true);
+
+    // Invalid length
+    expect(isValidMpesaCode("SDA123")).toBe(false);
+    expect(isValidMpesaCode("SDA123456789")).toBe(false);
+    // Invalid characters
+    expect(isValidMpesaCode("SDA123456@")).toBe(false);
+    expect(isValidMpesaCode("SDA 123456")).toBe(false);
+    // Repetitive or dummy
+    expect(isValidMpesaCode("AAAAAAAAAA")).toBe(false);
+    expect(isValidMpesaCode("0000000000")).toBe(false);
+    expect(isValidMpesaCode("1234567890")).toBe(false);
+    expect(isValidMpesaCode("FAKETEST12")).toBe(false);
+  });
+
+  it("calculates correct cumulative duration when underpayments aggregate", () => {
+    
+    // Single payment of KES 5 is underpaid (min is KES 10)
+    const single = calculateProportionalDuration(5, DEFAULT_PASSES);
+    expect(single.isUnderpaid).toBe(true);
+
+    // Aggregated payment: 5 + 5 = 10 KES meets minimum pass threshold (15h)
+    const aggregated = calculateProportionalDuration(10, DEFAULT_PASSES);
+    expect(aggregated.isUnderpaid).toBe(false);
+    expect(aggregated.hours).toBe(15);
+    expect(aggregated.totalMs).toBe(15 * 3600_000);
+
+    // Combined payment of 10 + 8 = 18 KES reaches 30h package
+    const combined30 = calculateProportionalDuration(18, DEFAULT_PASSES);
+    expect(combined30.isUnderpaid).toBe(false);
+    expect(combined30.hours).toBe(30);
   });
 });

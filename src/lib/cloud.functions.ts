@@ -1454,3 +1454,202 @@ export const generateDynamicPaybillTicket = createServerFn({ method: 'POST' })
       txnId: id
     };
   });
+
+
+/**
+ * Manual M-Pesa Receipt Verification (Anti-Fraud and Anti-Duplication):
+ * Allows users who paid via Paybill 756756 or STK to submit their Safaricom M-Pesa receipt code
+ * (e.g. SDA1234567 or TK12345678) when offline or when webhook was delayed.
+ *
+ * Rules:
+ * 1. Format validation: exactly 10 uppercase alphanumeric chars (e.g. SDA1234567).
+ * 2. Anti-duplication: checks whether this receipt has already been claimed/activated. If claimed by another device, strictly rejects.
+ * 3. Gateway verification: queries PayHero transaction status or internal callback records.
+ * 4. Activation: activates pass, calculates exact proportional duration, creates/binds session to the submitting device.
+ */
+export const verifyManualMpesaReceipt = createServerFn({ method: 'POST' })
+  .validator((input: { receiptNumber: string; phone: string; deviceId?: string }) => z.object({
+    receiptNumber: z.string(),
+    phone: z.string(),
+    deviceId: z.string().optional()
+  }).parse(input))
+  .handler(async ({ data }) => {
+    const rawReceipt = (data.receiptNumber || '').trim().toUpperCase();
+    const phone = normalizePhone(data.phone);
+    if (!phone) throw new Error('Enter a valid Safaricom phone number (07... or 01...)');
+
+    // Anti-fraud: Safaricom receipt codes are 10 uppercase alphanumeric characters
+    const receiptRegex = /^[A-Z0-9]{10}$/;
+    if (!receiptRegex.test(rawReceipt)) {
+      throw new Error('Invalid M-Pesa code format. Enter the exact 10-character code from your Safaricom SMS (e.g. SDA1234567).');
+    }
+
+    // Anti-fake checks: reject obvious repetitive or dummy strings
+    if (/^(.)\1{9}$/.test(rawReceipt) || rawReceipt === '1234567890' || rawReceipt.includes('TEST') || rawReceipt.includes('FAKE')) {
+      throw new Error('Unrecognized M-Pesa receipt code. Please provide genuine receipt from Lipa na M-Pesa.');
+    }
+
+    const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
+    const { loadOffers, payHeroStatus, activateTxn } = await import('./payments.server');
+
+    // 1. Anti-Duplication Check: has this receipt already been claimed/activated?
+    const { data: allTxns } = await supabaseAdmin
+      .from('gn_transactions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(300);
+
+    const existingActivated = (allTxns || []).find((t: any) => {
+      const p = t?.payload;
+      if (!p) return false;
+      const matchesReceipt =
+        p.ref?.toUpperCase() === rawReceipt ||
+        p.externalRef?.toUpperCase() === rawReceipt ||
+        p.receiptNumber?.toUpperCase() === rawReceipt ||
+        p.checkoutRequestId?.toUpperCase() === rawReceipt ||
+        (p.notes && p.notes.toUpperCase().includes(rawReceipt));
+      return matchesReceipt && p.status === 'Activated';
+    });
+
+    if (existingActivated) {
+      const p = existingActivated.payload as any;
+      // If already claimed by another device/phone, block duplicate redemption
+      if (data.deviceId && p.deviceId && p.deviceId !== data.deviceId && normalizePhone(p.phone || '') !== phone) {
+        throw new Error('This M-Pesa receipt has already been claimed on another device. Duplication is strictly blocked.');
+      }
+
+      // If for this device/phone, return the active session
+      const { data: sessionRow } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', existingActivated.id).maybeSingle();
+      if (sessionRow && sessionRow.payload) {
+        return {
+          ok: true,
+          status: 'activated' as const,
+          session: sessionRow.payload as Session,
+          message: 'Your roaming pass was already verified and is active!',
+        };
+      }
+    }
+
+    // 2. Check for an existing pending transaction matching this receipt, phone, or ticket
+    const pendingMatch = (allTxns || []).find((t: any) => {
+      const p = t?.payload;
+      if (!p) return false;
+      const matchesRef =
+        p.ref?.toUpperCase() === rawReceipt ||
+        p.externalRef?.toUpperCase() === rawReceipt ||
+        p.receiptNumber?.toUpperCase() === rawReceipt ||
+        p.checkoutRequestId?.toUpperCase() === rawReceipt;
+      const matchesPhone = normalizePhone(p.phone || '') === phone;
+      return (matchesRef || matchesPhone) && p.status === 'Pending';
+    });
+
+    // 3. Query PayHero gateway status for this receipt
+    let paymentStatus = await payHeroStatus(supabaseAdmin, rawReceipt);
+
+    // If pendingMatch exists and gateway status was pending with rawReceipt, try pendingMatch ref
+    if (paymentStatus === 'pending' && pendingMatch) {
+      const p = pendingMatch.payload as any;
+      if (p.ref && p.ref !== rawReceipt) {
+        paymentStatus = await payHeroStatus(supabaseAdmin, p.ref);
+      }
+      if (paymentStatus === 'pending' && p.externalRef && p.externalRef !== rawReceipt) {
+        paymentStatus = await payHeroStatus(supabaseAdmin, p.externalRef);
+      }
+    }
+
+    // 4. Also check if PayHero's transaction status API can find it via reference search
+    const { data: creds } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
+    let verifiedAmount = 0;
+    if (creds && creds.api_token && paymentStatus !== 'paid') {
+      try {
+        const { getPayHeroAuthHeader } = await import('./payhero-auth');
+        const authHeader = getPayHeroAuthHeader(creds);
+        const res = await fetch(`https://backend.payhero.co.ke/api/v2/payments?reference=${encodeURIComponent(rawReceipt)}`, {
+          headers: { Authorization: authHeader, Accept: 'application/json' }
+        });
+        if (res.ok) {
+          const listData = (await res.json().catch(() => ({}))) as any;
+          const items = Array.isArray(listData?.data) ? listData.data : Array.isArray(listData) ? listData : [];
+          const match = items.find((item: any) => {
+            const r = String(item.reference || item.MpesaReceiptNumber || item.external_reference || '').toUpperCase();
+            return r === rawReceipt;
+          });
+          if (match) {
+            const s = String(match.status || '').toUpperCase();
+            if (['SUCCESS', 'SUCCESSFUL', 'COMPLETED', 'COMPLETE', 'PAID', 'CONFIRMED'].includes(s) || match.is_paid === true) {
+              paymentStatus = 'paid';
+              verifiedAmount = Number(match.amount || 0);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('PayHero receipt search error:', err);
+      }
+    }
+
+    if (paymentStatus === 'failed') {
+      throw new Error('This M-Pesa transaction was cancelled or declined by Safaricom.');
+    }
+
+    if (paymentStatus !== 'paid') {
+      // Check if there is an underpaid record for this receipt
+      const underpaidRow = (allTxns || []).find((t: any) => {
+        const p = t?.payload;
+        return p && (p.ref?.toUpperCase() === rawReceipt || p.receiptNumber?.toUpperCase() === rawReceipt) && p.status === 'Underpaid';
+      });
+      if (underpaidRow) {
+        throw new Error(`Receipt ${rawReceipt} was an underpayment of KES ${(underpaidRow.payload as any).amount}. Minimum pass requires KES 10.`);
+      }
+      throw new Error('Receipt could not be verified yet. If you just received the M-Pesa SMS, wait 10-15 seconds for Safaricom to sync and tap verify again.');
+    }
+
+    // 5. Payment verified as genuine! Activate the transaction and session
+    const offers = await loadOffers(supabaseAdmin);
+    let amountToActivate = verifiedAmount || (pendingMatch ? (pendingMatch.payload as any).amount : 20);
+    const duration = calculateProportionalDuration(amountToActivate, offers);
+
+    let txnToActivate: Txn;
+    let txnId: string;
+
+    if (pendingMatch) {
+      txnId = pendingMatch.id;
+      txnToActivate = {
+        ...(pendingMatch.payload as Txn),
+        ref: rawReceipt,
+        amount: amountToActivate,
+        passId: duration.passId,
+        status: 'Activated',
+      };
+      (txnToActivate as any).receiptNumber = rawReceipt;
+      if (data.deviceId) (txnToActivate as any).deviceId = data.deviceId;
+    } else {
+      txnId = crypto.randomUUID();
+      txnToActivate = {
+        id: txnId,
+        ref: rawReceipt,
+        phone,
+        amount: amountToActivate,
+        passId: duration.passId,
+        at: Date.now(),
+        status: 'Activated',
+        mode: 'Live',
+      };
+      (txnToActivate as any).receiptNumber = rawReceipt;
+      if (data.deviceId) (txnToActivate as any).deviceId = data.deviceId;
+
+      await supabaseAdmin.from('gn_transactions').insert({
+        id: txnId,
+        user_id: txnId,
+        payload: JSON.parse(JSON.stringify(txnToActivate))
+      });
+    }
+
+    const session = await activateTxn(supabaseAdmin, txnToActivate, txnId, data.deviceId);
+
+    return {
+      ok: true,
+      status: 'activated' as const,
+      session,
+      message: `Receipt ${rawReceipt} confirmed! Internet pass activated for ${duration.hours.toFixed(1)} hours.`,
+    };
+  });

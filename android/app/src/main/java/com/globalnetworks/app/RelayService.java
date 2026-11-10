@@ -134,7 +134,8 @@ public class RelayService extends Service {
                 }
             }
             Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, channelId) : new Notification.Builder(this);
-            builder.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            int appIcon = getApplicationInfo().icon != 0 ? getApplicationInfo().icon : android.R.drawable.ic_dialog_info;
+            builder.setSmallIcon(appIcon)
                     .setContentTitle(title)
                     .setContentText(text)
                     .setOngoing(true);

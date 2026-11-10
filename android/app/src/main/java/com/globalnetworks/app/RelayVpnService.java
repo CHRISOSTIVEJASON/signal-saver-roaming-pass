@@ -83,7 +83,8 @@ public class RelayVpnService extends VpnService {
                 }
             }
             Notification.Builder builder = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, channelId) : new Notification.Builder(this);
-            builder.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            int appIcon = getApplicationInfo().icon != 0 ? getApplicationInfo().icon : android.R.drawable.ic_dialog_info;
+            builder.setSmallIcon(appIcon)
                     .setContentTitle(title)
                     .setContentText(text)
                     .setOngoing(true);
@@ -96,9 +97,11 @@ public class RelayVpnService extends VpnService {
     private synchronized void startVpnTunnel() {
         if (isRunning.get()) return;
 
-        // Blackhole safeguard: never establish 0.0.0.0/0 route if native engine is not loaded
+        // Native engine availability check
         if (!TProxyService.isLoaded()) {
-            Log.w(TAG, "Native tun2socks engine library is not bundled; skipping VPN route to prevent network blackhole.");
+            Log.w(TAG, "Native tun2socks engine library (libhev-socks5-tunnel.so) is not bundled or loaded on this device ABI; skipping VPN tunnel capture to prevent blackholing packets. Direct SOCKS5 proxy at " + hostIp + ":" + hostPort + " remains available.");
+            stopForeground(true);
+            stopSelf();
             return;
         }
 

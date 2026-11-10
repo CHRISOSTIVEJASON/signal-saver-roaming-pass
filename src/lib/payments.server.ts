@@ -1,4 +1,4 @@
-import { getPass, DEFAULT_PASSES, type PassOffer, calculateProportionalDuration, ensureUuid } from './rules';
+import { getPass, DEFAULT_PASSES, type PassOffer, calculateProportionalDuration, ensureUuid, normalizePhone } from './rules';
 import type { Session, Txn } from './store';
 import { getCompanionPin, generateCompanionPin } from './relay';
 import { getPayHeroAuthHeader } from './payhero-auth';
@@ -54,11 +54,36 @@ export async function activateTxn(db: Admin, txn: Txn, userId: string, deviceId?
   } else {
     const duration = calculateProportionalDuration(txn.amount, offers, txn.passId);
     if (duration.isUnderpaid) {
-      await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Underpaid', notes: `Underpayment: KES ${txn.amount} received (minimum KES ${duration.minAmount})` }) }).eq('id', txn.id);
-      throw new Error(`Payment of KES ${txn.amount} is below the minimum pass amount of KES ${duration.minAmount}. No internet pass granted.`);
+      // Check for prior underpayments to aggregate
+      const twoHoursAgo = Date.now() - 2 * 3600_000;
+      const { data: recentUnderpaid } = await db.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(30);
+      const eligibleUnderpaid = (recentUnderpaid || []).filter((t: any) => {
+        if (t.id === txn.id) return false;
+        const p = t?.payload;
+        if (!p || p.status !== 'Underpaid') return false;
+        return normalizePhone(p.phone || '') === normalizePhone(txn.phone || '') && (p.at || 0) >= twoHoursAgo;
+      });
+      const priorAmount = eligibleUnderpaid.reduce((sum: number, t: any) => sum + (Number(t?.payload?.amount) || 0), 0);
+      const combinedAmount = (txn.amount || 0) + priorAmount;
+      const combinedDuration = calculateProportionalDuration(combinedAmount, offers, txn.passId);
+      if (!combinedDuration.isUnderpaid) {
+        for (const up of eligibleUnderpaid) {
+          const p = up.payload as any;
+          await db.from('gn_transactions').update({
+            payload: j({ ...p, status: 'Aggregated', aggregatedInto: txn.id, notes: `Aggregated into ${txn.id} (total KES ${combinedAmount})` })
+          }).eq('id', up.id);
+        }
+        totalMs = combinedDuration.totalMs;
+        passId = combinedDuration.passId;
+        txn.amount = combinedAmount;
+      } else {
+        await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Underpaid', notes: `Underpayment: KES ${txn.amount} received (cumulative KES ${combinedAmount}, minimum KES ${duration.minAmount})` }) }).eq('id', txn.id);
+        throw new Error(`Payment of KES ${txn.amount} is below the minimum pass amount of KES ${duration.minAmount}. No internet pass granted.`);
+      }
+    } else {
+      totalMs = duration.totalMs;
+      passId = duration.passId;
     }
-    totalMs = duration.totalMs;
-    passId = duration.passId;
   }
 
   const now = Date.now();

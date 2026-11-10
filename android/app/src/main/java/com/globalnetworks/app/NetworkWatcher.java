@@ -82,6 +82,8 @@ public class NetworkWatcher {
     private volatile long lastAuthFailedTime = 0;
     private volatile long lastSuggestionTime = 0;
     private volatile long lastFallbackTrigger = 0;
+    private volatile long lastScanRequestTime = 0;
+    private static final long SCAN_THROTTLE_WINDOW_MS = 35_000L; // 35s throttle window
 
     public int getLastBestRssi() {
         return lastBestRssi;
@@ -339,8 +341,10 @@ public class NetworkWatcher {
         try {
             if (wifiManager == null) return;
 
-            // Trigger active scan request if Wi-Fi is enabled
-            if (wifiManager.isWifiEnabled()) {
+            // Throttled active scan request: Android 9+ allows max 4 scans / 2 min for foreground apps
+            long nowTime = System.currentTimeMillis();
+            if (wifiManager.isWifiEnabled() && (nowTime - lastScanRequestTime >= SCAN_THROTTLE_WINDOW_MS)) {
+                lastScanRequestTime = nowTime;
                 try {
                     wifiManager.startScan();
                 } catch (Throwable ignored) {}
@@ -505,7 +509,8 @@ public class NetworkWatcher {
                     ? new Notification.Builder(context, NOTIFICATION_CHANNEL_ID)
                     : new Notification.Builder(context);
 
-            builder.setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            int appIcon = context.getApplicationInfo().icon != 0 ? context.getApplicationInfo().icon : android.R.drawable.ic_dialog_info;
+            builder.setSmallIcon(appIcon)
                     .setContentTitle("Network Available")
                     .setContentText("Network available, kindly consider paying.")
                     .setStyle(new Notification.BigTextStyle().bigText("Network available, kindly consider paying.\nSensed \"" + ssid + "\" nearby. Tap to open Signal Saver and unlock your pass."))
@@ -651,7 +656,8 @@ public class NetworkWatcher {
                     ? new Notification.Builder(context, NOTIFICATION_CHANNEL_ID)
                     : new Notification.Builder(context);
 
-            builder.setSmallIcon(android.R.drawable.stat_notify_sync)
+            int appIcon = context.getApplicationInfo().icon != 0 ? context.getApplicationInfo().icon : android.R.drawable.ic_dialog_info;
+            builder.setSmallIcon(appIcon)
                     .setContentTitle("Connecting via Companion Relay")
                     .setContentText("Direct Wi-Fi rejected. Auto-routing via companion relay...")
                     .setStyle(new Notification.BigTextStyle().bigText("Direct Wi-Fi rejected (" + reason + "). Automatically routing through an active nearby companion mesh relay."))
