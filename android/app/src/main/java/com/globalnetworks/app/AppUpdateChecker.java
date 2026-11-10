@@ -27,7 +27,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Checks for mandatory updates on app launch via Supabase gn_settings and prompts user to install.
+ * Checks for updates on app launch via Supabase gn_settings and prompts user to install.
  */
 public final class AppUpdateChecker {
     private static final String TAG = "AppUpdateChecker";
@@ -90,7 +90,8 @@ public final class AppUpdateChecker {
                 boolean isNewer = isNewerVersion(latestVersion, currentVersion);
                 if (isNewer || (updateRequired && !latestVersion.isEmpty() && !latestVersion.equals(currentVersion))) {
                     final String targetUrl = apkUrl;
-                    MAIN.post(() -> showMandatoryUpdateDialog(activity, targetUrl));
+                    final boolean mandatory = updateRequired;
+                    MAIN.post(() -> showUpdateDialog(activity, targetUrl, mandatory));
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Update check failed", e);
@@ -119,23 +120,26 @@ public final class AppUpdateChecker {
         return false;
     }
 
-    private static void showMandatoryUpdateDialog(final Activity activity, final String downloadUrl) {
+    private static void showUpdateDialog(final Activity activity, final String downloadUrl, final boolean mandatory) {
         if (activity == null || activity.isFinishing()) return;
 
         AlertDialog.Builder builder = new AlertDialog.Builder(activity);
-        builder.setTitle("Update Required");
-        builder.setMessage("A new version of Signal Saver / Global Networks is available. You must update to continue using the app.");
-        builder.setCancelable(false);
+        builder.setTitle(mandatory ? "Update Required" : "Update Available");
+        builder.setMessage("A new version of Signal Saver / Global Networks is available. Would you like to update now?");
+        builder.setCancelable(!mandatory);
         builder.setPositiveButton("Update Now", (dialog, which) -> downloadAndInstall(activity, downloadUrl));
+        if (!mandatory) {
+            builder.setNegativeButton("Later", null);
+        }
         AlertDialog dialog = builder.create();
-        dialog.setCanceledOnTouchOutside(false);
+        dialog.setCanceledOnTouchOutside(!mandatory);
         dialog.show();
     }
 
     private static void downloadAndInstall(final Activity activity, final String downloadUrl) {
         ProgressDialog progress = new ProgressDialog(activity);
         progress.setTitle("Downloading Update");
-        progress.setMessage("Downloading the latest version, please wait...");
+        progress.setMessage("Downloading latest APK, please wait...");
         progress.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
         progress.setMax(100);
         progress.setIndeterminate(false);
@@ -151,6 +155,32 @@ public final class AppUpdateChecker {
                 conn.setConnectTimeout(15000);
                 conn.setReadTimeout(30000);
                 conn.setInstanceFollowRedirects(true);
+
+                // Explicitly follow HTTP -> HTTPS / CDN redirects (e.g. GitHub releases to AWS S3/Azure Blob CDN)
+                int redirects = 0;
+                while (redirects < 5) {
+                    int status = conn.getResponseCode();
+                    if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM
+                            || status == HttpURLConnection.HTTP_SEE_OTHER || status == 307 || status == 308) {
+                        String newLocation = conn.getHeaderField("Location");
+                        if (newLocation != null && !newLocation.isEmpty()) {
+                            conn.disconnect();
+                            url = new URL(newLocation);
+                            conn = (HttpURLConnection) url.openConnection();
+                            conn.setRequestProperty("User-Agent", "Signal-Saver-Roaming-Pass-Android");
+                            conn.setConnectTimeout(15000);
+                            conn.setReadTimeout(30000);
+                            redirects++;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+
+                int respCode = conn.getResponseCode();
+                if (respCode != HttpURLConnection.HTTP_OK) {
+                    throw new java.io.IOException("Server returned HTTP " + respCode + " (" + conn.getResponseMessage() + ")");
+                }
 
                 int size = conn.getContentLength();
                 File dir = activity.getExternalCacheDir();
@@ -182,10 +212,11 @@ public final class AppUpdateChecker {
                     dismiss(progress);
                     if (!activity.isFinishing()) {
                         new AlertDialog.Builder(activity)
-                                .setTitle("Update Failed")
-                                .setMessage("Failed to download update: " + e.getMessage() + "\n\nPlease check your internet connection.")
-                                .setCancelable(false)
+                                .setTitle("Update Notice")
+                                .setMessage("Could not complete APK download: " + e.getMessage() + "\n\nYou can retry or continue to the app.")
+                                .setCancelable(true)
                                 .setPositiveButton("Retry", (d, w) -> downloadAndInstall(activity, downloadUrl))
+                                .setNegativeButton("Continue to App", null)
                                 .show();
                     }
                 });
