@@ -15,6 +15,7 @@ import android.media.ToneGenerator;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
 import android.net.TransportInfo;
 import android.net.wifi.ScanResult;
 import android.net.wifi.WifiInfo;
@@ -76,6 +77,9 @@ public class NetworkWatcher {
     private volatile String currentNearbySsid = null;
     private volatile boolean nearbyPoolDetected = false;
     private volatile int lastBestRssi = -999;
+    private volatile String lastSuggestedSsid = null;
+    private volatile long lastSuggestionTime = 0;
+    private volatile long lastFallbackTrigger = 0;
 
     public int getLastBestRssi() {
         return lastBestRssi;
@@ -170,12 +174,30 @@ public class NetworkWatcher {
                 networkReceiver = new BroadcastReceiver() {
                     @Override
                     public void onReceive(Context context, Intent intent) {
+                        if (intent != null) {
+                            String action = intent.getAction();
+                            if (WifiManager.SUPPLICANT_STATE_CHANGED_ACTION.equals(action)) {
+                                int suppError = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1);
+                                if (suppError == WifiManager.ERROR_AUTHENTICATING) {
+                                    triggerCompanionRelayFallback("Wi-Fi authentication rejected");
+                                }
+                            } else if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(action)) {
+                                NetworkInfo netInfo = intent.getParcelableExtra(WifiManager.EXTRA_NETWORK_INFO);
+                                if (netInfo != null) {
+                                    NetworkInfo.DetailedState detailed = netInfo.getDetailedState();
+                                    if (detailed == NetworkInfo.DetailedState.FAILED || detailed == NetworkInfo.DetailedState.BLOCKED) {
+                                        triggerCompanionRelayFallback("Wi-Fi connection " + detailed.name().toLowerCase(Locale.US));
+                                    }
+                                }
+                            }
+                        }
                         mainHandler.post(() -> sniffNetworks());
                     }
                 };
                 IntentFilter netFilter = new IntentFilter();
                 netFilter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
                 netFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+                netFilter.addAction(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION);
                 context.registerReceiver(networkReceiver, netFilter);
             }
         } catch (Throwable t) {
@@ -357,6 +379,24 @@ public class NetworkWatcher {
                 currentNearbySsid = null;
                 nearbyPoolDetected = false;
             }
+
+            if (hasActivePass() && lastSuggestedSsid != null) {
+                if (System.currentTimeMillis() - lastSuggestionTime >= 15000) {
+                    boolean connectedToPool = false;
+                    if (connSsid != null) {
+                        for (String ps : poolSsids) {
+                            if (ps.equalsIgnoreCase(connSsid)) {
+                                connectedToPool = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!connectedToPool) {
+                        triggerCompanionRelayFallback("Connection to " + lastSuggestedSsid + " timed out or was rejected");
+                    }
+                    lastSuggestedSsid = null;
+                }
+            }
         } catch (Throwable t) {
             Log.e(TAG, "Error sniffing networks", t);
         }
@@ -454,6 +494,8 @@ public class NetworkWatcher {
 
     private void suggestNetworkToAndroid(String ssid) {
         if (ssid == null || ssid.isEmpty() || ssid.equals("Global Mesh Relay")) return;
+        lastSuggestedSsid = ssid;
+        lastSuggestionTime = System.currentTimeMillis();
         String pass = getPasswordForSsid(ssid);
 
         if (Build.VERSION.SDK_INT >= 29 && wifiManager != null) {
@@ -549,4 +591,50 @@ public class NetworkWatcher {
         }
         return null;
     }
+
+    public void triggerCompanionRelayFallback(String reason) {
+        if (!hasActivePass()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastFallbackTrigger < 10000) return;
+        lastFallbackTrigger = now;
+
+        Log.i(TAG, "Companion relay fallback triggered: " + reason);
+        try {
+            GlobalRelayPlugin plugin = GlobalRelayPlugin.getInstance();
+            if (plugin != null) {
+                plugin.startCompanionSearchFallback();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "Error triggering companion fallback: " + t.getMessage());
+        }
+
+        postFallbackNotification(reason);
+    }
+
+    private void postFallbackNotification(String reason) {
+        try {
+            if (notificationManager == null) return;
+
+            Intent intent = new Intent(context, MainActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            int flags = Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : PendingIntent.FLAG_UPDATE_CURRENT;
+            PendingIntent pendingIntent = PendingIntent.getActivity(context, 2027, intent, flags);
+
+            Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                    ? new Notification.Builder(context, NOTIFICATION_CHANNEL_ID)
+                    : new Notification.Builder(context);
+
+            builder.setSmallIcon(android.R.drawable.stat_notify_sync)
+                    .setContentTitle("Connecting via Companion Relay")
+                    .setContentText("Direct Wi-Fi rejected. Auto-routing via companion relay...")
+                    .setStyle(new Notification.BigTextStyle().bigText("Direct Wi-Fi rejected (" + reason + "). Automatically routing through an active nearby companion mesh relay."))
+                    .setContentIntent(pendingIntent)
+                    .setAutoCancel(true);
+
+            notificationManager.notify(2027, builder.build());
+        } catch (Throwable t) {
+            Log.w(TAG, "Failed to post fallback notification: " + t.getMessage());
+        }
+    }
+
 }

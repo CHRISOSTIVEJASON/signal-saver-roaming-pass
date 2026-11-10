@@ -86,8 +86,12 @@ export function NativeBridge() {
 
       if (active) {
         void GlobalRelay.start({ active, upstreamInPool }).catch(() => {});
-        if (!upstreamInPool && device.currentWifi) {
-          void GlobalRelay.startClientAutoRouter().catch(() => {});
+        if (!upstreamInPool) {
+          if (device.currentWifi) {
+            void GlobalRelay.startClientAutoRouter().catch(() => {});
+          } else {
+            void GlobalRelay.triggerCompanionFallback().catch(() => {});
+          }
         }
       } else {
         void GlobalRelay.stop().catch(() => {});

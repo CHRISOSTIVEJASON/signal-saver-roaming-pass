@@ -58,6 +58,12 @@ import java.io.InputStream;
     @Permission(alias="notifications", strings={Manifest.permission.POST_NOTIFICATIONS})
 })
 public class GlobalRelayPlugin extends Plugin {
+    private static volatile GlobalRelayPlugin activeInstance;
+
+    public static GlobalRelayPlugin getInstance() {
+        return activeInstance;
+    }
+
     private WifiP2pManager manager;
     private WifiP2pManager.Channel channel;
     private WifiAwareSession awareSession;
@@ -72,6 +78,7 @@ public class GlobalRelayPlugin extends Plugin {
 
     @Override
     public void load() {
+        activeInstance = this;
         manager = (WifiP2pManager) getContext().getSystemService(Context.WIFI_P2P_SERVICE);
         if (manager != null) {
             channel = manager.initialize(getContext(), Looper.getMainLooper(), null);
@@ -392,6 +399,57 @@ public class GlobalRelayPlugin extends Plugin {
         vpnIntent.setAction(RelayVpnService.ACTION_STOP_CLIENT);
         getContext().startService(vpnIntent);
         call.resolve();
+    }
+
+    @PluginMethod
+    public void triggerCompanionFallback(PluginCall call) {
+        startCompanionSearchFallback();
+        JSObject res = new JSObject();
+        res.put("success", true);
+        call.resolve(res);
+    }
+
+    public void startCompanionSearchFallback() {
+        Log.i("GlobalRelayPlugin", "Initiating automated companion relay fallback search");
+        try {
+            WifiManager wm = (WifiManager) getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                android.net.DhcpInfo dhcp = wm.getDhcpInfo();
+                if (dhcp != null && dhcp.gateway != 0) {
+                    String detectedGw = android.text.format.Formatter.formatIpAddress(dhcp.gateway);
+                    if (detectedGw != null && !detectedGw.equals("0.0.0.0") && !detectedGw.equals("127.0.0.1")) {
+                        autoEngageClientRouter(detectedGw, RelayService.RELAY_PORT);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        if (!granted() || manager == null || channel == null) return;
+        try {
+            upstream = false;
+            manager.setDnsSdResponseListeners(channel, (instance, type, device) -> {
+                if (instance != null && instance.equals("GLOBAL-NETWORKS")) {
+                    Log.i("GlobalRelayPlugin", "Discovered companion host: " + device.deviceName + " (" + device.deviceAddress + ")");
+                    WifiP2pConfig config = new WifiP2pConfig();
+                    config.deviceAddress = device.deviceAddress;
+                    manager.connect(channel, config, action());
+                }
+            }, (domain, txt, device) -> {});
+
+            manager.addServiceRequest(channel, android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest.newInstance(), action());
+            manager.discoverServices(channel, action());
+            manager.discoverPeers(channel, action());
+        } catch (Throwable t) {
+            Log.w("GlobalRelayPlugin", "Error starting Wi-Fi Direct companion fallback: " + t.getMessage());
+        }
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        super.handleOnDestroy();
+        if (activeInstance == this) {
+            activeInstance = null;
+        }
     }
 
     @PluginMethod
