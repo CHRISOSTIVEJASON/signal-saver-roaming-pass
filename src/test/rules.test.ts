@@ -86,7 +86,7 @@ describe("mobile data smart prompt check", () => {
   });
 });
 
-import { calculateProportionalDuration, MANUAL_PAYBILL, MANUAL_ACCOUNT, formatClock } from "@/lib/rules";
+import { calculateProportionalDuration, MANUAL_PAYBILL, MANUAL_ACCOUNT, formatClock, ensureUuid } from "@/lib/rules";
 
 describe("proportional payment duration & underpayment rules", () => {
   it("exports the required Paybill and Account numbers", () => {
@@ -149,5 +149,18 @@ describe("proportional payment duration & underpayment rules", () => {
     expect(p36.isUnderpaid).toBe(false);
     expect(p36.hours).toBe(60);
     expect(formatClock(p36.totalMs)).toBe("60:00:00");
+  });
+
+  it("generates and preserves valid RFC4122 UUIDs for database operations", () => {
+    const valid = "12345678-1234-4234-8234-123456789abc";
+    expect(ensureUuid(valid)).toBe(valid);
+
+    const legacyDevId = "dev-abc123xyz";
+    const converted = ensureUuid(legacyDevId);
+    expect(converted).not.toBe(legacyDevId);
+    expect(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(converted)).toBe(true);
+
+    const fromEmpty = ensureUuid();
+    expect(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(fromEmpty)).toBe(true);
   });
 });

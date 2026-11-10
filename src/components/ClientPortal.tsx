@@ -6,7 +6,7 @@ import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, sh
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, useServiceStatus, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
 import { useConfig } from "./Gates";
 import { useServerFn } from "@tanstack/react-start";
-import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession, listenForBackgroundPayment, verifyManualPaymentReceipt, generateDynamicPaybillTicket } from "@/lib/cloud.functions";
+import { startCloudPayment, confirmCloudPayment, restoreCloudPass, pairCompanionPass, unpairCompanionPass, heartbeatSession, listenForBackgroundPayment, generateDynamicPaybillTicket } from "@/lib/cloud.functions";
 import { contributeNetworkAndCaptive } from "@/lib/captive.functions";
 import { saveShared } from "@/lib/cloud-cache";
 import { GlobalRelay } from "@/lib/native-relay";
@@ -210,11 +210,8 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const restorePass = useServerFn(restoreCloudPass);
   const pairCompanion = useServerFn(pairCompanionPass);
   const checkBackgroundPayment = useServerFn(listenForBackgroundPayment);
-  const verifyReceipt = useServerFn(verifyManualPaymentReceipt);
   const getDynamicTicket = useServerFn(generateDynamicPaybillTicket);
 
-  const [manualReceipt, setManualReceipt] = useState("");
-  const [manualVerifying, setManualVerifying] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [dynamicAccount, setDynamicAccount] = useState<string>(MANUAL_ACCOUNT);
   const [ticketId, setTicketId] = useState<string>("13205");
@@ -335,37 +332,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     };
   }, [phone, existingSession?.remainingMs, checkBackgroundPayment, onActivated]);
 
-  async function handleVerifyReceipt(e: React.FormEvent) {
-    e.preventDefault();
-    const msisdn = normalizePhone(phone);
-    if (!msisdn) {
-      toast.error("Enter your phone number above first");
-      return;
-    }
-    const code = manualReceipt.trim();
-    if (!code) {
-      toast.error("Enter your M-Pesa receipt code (e.g. TL12345678)");
-      return;
-    }
-    setManualVerifying(true);
-    try {
-      const res = await verifyReceipt({ data: { phone: msisdn, receiptCode: code, deviceId: getDeviceId() } });
-      if (res.ok && res.session) {
-        savePersistedPhone(msisdn);
-        if (Capacitor.isNativePlatform()) {
-          void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
-          void GlobalRelay.saveDeviceId({ deviceId: getDeviceId() }).catch(() => {});
-        }
-        onActivated(res.session);
-        setManualReceipt("");
-        toast.success(`Payment verified! ${res.hours ? `${res.hours} hours` : "Pass"} activated.`);
-      }
-    } catch (err: any) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setManualVerifying(false);
-    }
-  }
+
 
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [restorePhone, setRestorePhone] = useState("");
@@ -492,8 +459,17 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
       } else {
         setBusy("Activating Demo pass (Test mode)…");
         await new Promise((res) => setTimeout(res, 800));
-        const st = await confirmPayment({ data: { id: r.id, deviceId } });
-        if (!st.session) throw new Error("Demo pass could not be activated");
+        let st: any = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            st = await confirmPayment({ data: { id: r.id, deviceId } });
+            if (!st?.pending && st?.session) break;
+          } catch (err) {
+            if (attempt === 4) throw err;
+          }
+          await new Promise((res) => setTimeout(res, 500));
+        }
+        if (!st?.session) throw new Error("Demo pass could not be activated");
         savePersistedPhone(msisdn);
         if (Capacitor.isNativePlatform()) {
           void GlobalRelay.saveDevicePhone({ phone: msisdn }).catch(() => {});
@@ -743,24 +719,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
               <span className="font-bold text-foreground font-mono">KES {pass.amount}</span>
             </div>
 
-            <form onSubmit={handleVerifyReceipt} className="flex gap-1.5 pt-1">
-              <input
-                type="text"
-                placeholder="M-Pesa Receipt Code (e.g. TL123456)"
-                value={manualReceipt}
-                onChange={(e) => setManualReceipt(e.target.value)}
-                className="flex-1 h-9 rounded-lg border border-input bg-background px-2.5 text-xs font-mono text-foreground uppercase placeholder:normal-case placeholder:text-muted-foreground"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                variant="outline"
-                disabled={manualVerifying || !manualReceipt.trim()}
-                className="h-9 px-3 text-xs font-semibold shrink-0"
-              >
-                {manualVerifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Verify Code"}
-              </Button>
-            </form>
+
 
             <div className="pt-2">
               <Button

@@ -1,6 +1,6 @@
 import { createServerFn } from '@tanstack/react-start';
 import { z } from 'zod';
-import { getPass, normalizePhone, tick, formatClock, DEFAULT_PASSES, type PassOffer, calculateProportionalDuration } from './rules';
+import { getPass, normalizePhone, tick, formatClock, DEFAULT_PASSES, type PassOffer, calculateProportionalDuration, ensureUuid } from './rules';
 import type { Session, Txn, PayConfig } from './store';
 import { getCompanionPin, generateCompanionPin } from './relay';
 
@@ -179,7 +179,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
     }
 
     const id = crypto.randomUUID();
-    const userId = data.deviceId || id;
+    const userId = ensureUuid(data.deviceId || id);
 
     if (isExempt) {
       // VIP Exemption: complete immediately, revenue records 0, activate session
@@ -194,11 +194,18 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         status: 'Activated',
         mode: 'Exempted' as any,
       };
-      await supabaseAdmin.from('gn_transactions').insert({
+      const { error: exemptTxnErr } = await supabaseAdmin.from('gn_transactions').insert({
         id,
         user_id: userId,
         payload: JSON.parse(JSON.stringify(exemptTxn))
       });
+      if (exemptTxnErr) {
+        await supabaseAdmin.from('gn_transactions').insert({
+          id,
+          user_id: id,
+          payload: JSON.parse(JSON.stringify(exemptTxn))
+        });
+      }
 
       const now = Date.now();
       const totalMs = pass.hours * 3600_000;
@@ -278,11 +285,19 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       txn.ref = ref;
     }
 
-    await supabaseAdmin.from('gn_transactions').insert({
+    const { error: txnErr } = await supabaseAdmin.from('gn_transactions').insert({
       id,
       user_id: userId,
       payload: JSON.parse(JSON.stringify(txn))
     });
+    if (txnErr) {
+      console.warn('Initial gn_transactions insert failed, retrying with id:', txnErr);
+      await supabaseAdmin.from('gn_transactions').insert({
+        id,
+        user_id: id,
+        payload: JSON.parse(JSON.stringify(txn))
+      });
+    }
 
     return { id, live, ref };
   });
@@ -295,8 +310,14 @@ export const confirmCloudPayment = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
     const { confirmTxn, activateTxn, loadOffers } = await import('./payments.server');
-    const { data: row } = await supabaseAdmin.from('gn_transactions').select('*').eq('id', data.id).maybeSingle();
-    if (!row) throw new Error('Payment not found');
+    let { data: row } = await supabaseAdmin.from('gn_transactions').select('*').eq('id', data.id).maybeSingle();
+    if (!row) {
+      const { data: altRows } = await supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(20);
+      row = altRows?.find((r) => r.id === data.id || (r.payload as any)?.ref === data.id || (r.payload as any)?.externalRef === data.id) || null;
+    }
+    if (!row) {
+      return { pending: true, session: null };
+    }
     return confirmTxn(supabaseAdmin, row, data.deviceId);
   });
 
@@ -377,7 +398,7 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
         };
         const { error: insertError } = await supabaseAdmin.from('gn_transactions').insert({
           id,
-          user_id: data.deviceId || id,
+          user_id: ensureUuid(data.deviceId || id),
           payload: JSON.parse(JSON.stringify({ ...txn, mode: 'Exempted' })),
         });
         if (insertError) throw new Error('Unable to create the VIP pass. Please try again.');
@@ -1013,7 +1034,7 @@ export const toggleFreezeSession = createServerFn({ method: 'POST' })
         };
         await supabaseAdmin.from('gn_sessions').upsert({
           id: tp.id,
-          user_id: tp.id,
+          user_id: ensureUuid(tp?.id),
           payload: JSON.parse(JSON.stringify(payload)),
           updated_at: new Date().toISOString()
         });

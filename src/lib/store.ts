@@ -197,22 +197,34 @@ export function recordRelayTick(phone: string) {
   });
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function getDeviceId(): string {
-  if (typeof window === "undefined") return "browser-device";
+  if (typeof window === "undefined") return "00000000-0000-4000-8000-000000000000";
   let id: string | null = null;
   try {
     id = localStorage.getItem("gn_device_id");
-    if (id && id.trim()) return id.trim();
+    if (id && UUID_REGEX.test(id.trim())) return id.trim().toLowerCase();
   } catch {}
   try {
     const match = document.cookie.match(/(?:^|;\s*)gn_device_id=([^;]+)/);
     if (match && match[1]) {
-      id = decodeURIComponent(match[1]);
-      try { localStorage.setItem("gn_device_id", id); } catch {}
-      return id;
+      const decoded = decodeURIComponent(match[1]).trim();
+      if (UUID_REGEX.test(decoded)) {
+        try { localStorage.setItem("gn_device_id", decoded.toLowerCase()); } catch {}
+        return decoded.toLowerCase();
+      }
     }
   } catch {}
-  id = "dev-" + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    id = crypto.randomUUID();
+  } else {
+    id = "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === "x" ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
   try { localStorage.setItem("gn_device_id", id); } catch {}
   try { document.cookie = "gn_device_id=" + encodeURIComponent(id) + "; max-age=31536000; path=/; SameSite=Lax"; } catch {}
   return id;

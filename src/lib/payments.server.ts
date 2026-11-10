@@ -1,4 +1,4 @@
-import { getPass, DEFAULT_PASSES, type PassOffer, calculateProportionalDuration } from './rules';
+import { getPass, DEFAULT_PASSES, type PassOffer, calculateProportionalDuration, ensureUuid } from './rules';
 import type { Session, Txn } from './store';
 import { getCompanionPin, generateCompanionPin } from './relay';
 import { getPayHeroAuthHeader } from './payhero-auth';
@@ -64,10 +64,11 @@ export async function activateTxn(db: Admin, txn: Txn, userId: string, deviceId?
   const now = Date.now();
   const companionPin = generateCompanionPin();
   const session: Session = { id: txn.id, phone: txn.phone, passId, totalMs, remainingMs: totalMs, lastTick: now, online: true, startedAt: now, companionPin };
+  const safeUserId = ensureUuid(userId);
   const { error } = await db.from('gn_sessions').upsert({
-    id: txn.id, user_id: userId,
+    id: txn.id, user_id: safeUserId,
     payload: j({ ...session, bound_device_id: deviceId || null, companion_pin: companionPin, paired_companion_id: null }),
-  }, { onConflict: 'id', ignoreDuplicates: true });
+  }, { onConflict: 'id' });
   if (error) throw new Error('Could not record your pass. Please try again.');
   await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Activated', passId }) }).eq('id', txn.id);
   return session;
