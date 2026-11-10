@@ -8,6 +8,7 @@ export interface NativeState {
   relay?: MeshLink;
   nearbyPoolDetected?: boolean;
   nearbySsid?: string;
+  authFailedSsid?: string;
 }
 
 export interface UpdateProgressData {
@@ -35,6 +36,7 @@ export const GlobalRelay = registerPlugin<{
   getDeviceId(): Promise<{ deviceId: string }>;
   submitCaptivePortal(options: { bssid?: string; ssid?: string; loginUrl?: string; portalUrl?: string; fields?: Record<string, string>; voucherCode?: string; phoneNumber?: string }): Promise<{ validated: boolean; success?: boolean; statusCode?: number; message?: string }>;
   installUpdate(options: { url: string }): Promise<{ success: boolean; message?: string }>;
+  clearAuthFailed(): Promise<{ success: boolean }>;
   addListener(event: 'stateChanged', callback: (state: NativeState) => void): Promise<PluginListenerHandle>;
   addListener(event: 'updateProgress', callback: (data: UpdateProgressData) => void): Promise<PluginListenerHandle>;
 }>('GlobalRelay');

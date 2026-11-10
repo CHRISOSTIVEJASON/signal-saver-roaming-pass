@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { GlobalRelay, type NativeState } from '@/lib/native-relay';
-import { KEYS, defaultDevice, read, write, useStored, useBeepAlerts, type Session, type Network, type Device } from '@/lib/store';
+import { KEYS, defaultDevice, read, write, useStored, useBeepAlerts, recordNetworkAlert, type Session, type Network, type Device } from '@/lib/store';
 import { saveShared } from '@/lib/cloud-cache';
 import { connectionState } from '@/lib/rules';
 
@@ -56,6 +56,17 @@ export function NativeBridge() {
           nearbyPoolDetected: Boolean(state.nearbyPoolDetected),
           nearbySsid: state.nearbySsid ?? undefined,
         });
+
+        if (state.authFailedSsid) {
+          const failedSsid = state.authFailedSsid.trim();
+          const matchedNet = poolRef.current.find(
+            (n) => n.ssid && n.ssid.trim().toLowerCase() === failedSsid.toLowerCase()
+          );
+          if (matchedNet) {
+            recordNetworkAlert(matchedNet.ssid, matchedNet.bssid, matchedNet.venue);
+          }
+          void GlobalRelay.clearAuthFailed().catch(() => {});
+        }
 
         if (state.relay && Date.now() - lastMeshSync > 9000) {
           lastMeshSync = Date.now();

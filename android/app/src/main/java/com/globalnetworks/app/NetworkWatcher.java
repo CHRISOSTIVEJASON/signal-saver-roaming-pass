@@ -78,6 +78,8 @@ public class NetworkWatcher {
     private volatile boolean nearbyPoolDetected = false;
     private volatile int lastBestRssi = -999;
     private volatile String lastSuggestedSsid = null;
+    private volatile String lastAuthFailedSsid = null;
+    private volatile long lastAuthFailedTime = 0;
     private volatile long lastSuggestionTime = 0;
     private volatile long lastFallbackTrigger = 0;
 
@@ -179,6 +181,7 @@ public class NetworkWatcher {
                             if (WifiManager.SUPPLICANT_STATE_CHANGED_ACTION.equals(action)) {
                                 int suppError = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1);
                                 if (suppError == WifiManager.ERROR_AUTHENTICATING) {
+                                    handleAuthFailure();
                                     triggerCompanionRelayFallback("Wi-Fi authentication rejected");
                                 }
                             } else if (WifiManager.NETWORK_STATE_CHANGED_ACTION.equals(action)) {
@@ -295,6 +298,29 @@ public class NetworkWatcher {
 
     public boolean hasActivePass() {
         return prefs.getBoolean(KEY_HAS_ACTIVE_PASS, false);
+    }
+
+    private void handleAuthFailure() {
+        String target = lastSuggestedSsid;
+        if (target == null || target.isEmpty()) {
+            target = currentNearbySsid;
+        }
+        if (target != null && !target.isEmpty()) {
+            lastAuthFailedSsid = target;
+            lastAuthFailedTime = System.currentTimeMillis();
+            Log.w(TAG, "Supplicant authentication failed (password mismatch) for: " + target);
+        }
+    }
+
+    public String getLastAuthFailedSsid() {
+        if (lastAuthFailedSsid != null && (System.currentTimeMillis() - lastAuthFailedTime < 120000)) {
+            return lastAuthFailedSsid;
+        }
+        return null;
+    }
+
+    public void clearLastAuthFailedSsid() {
+        lastAuthFailedSsid = null;
     }
 
     public String getCurrentNearbySsid() {

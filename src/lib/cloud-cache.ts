@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-const shared = new Set(["gn_networks", "gn_sessions", "gn_txns", "gn_payhero", "gn_mesh_links"]);
+const shared = new Set(["gn_networks", "gn_sessions", "gn_txns", "gn_payhero", "gn_mesh_links", "gn_network_alerts"]);
 const values = new Map<string, unknown>();
 const emptyList: unknown[] = [];
 const defaults = new Map<string, unknown>();

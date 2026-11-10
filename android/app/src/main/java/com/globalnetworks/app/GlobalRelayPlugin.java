@@ -295,6 +295,9 @@ public class GlobalRelayPlugin extends Plugin {
             if (watcher.getCurrentNearbySsid() != null) {
                 result.put("nearbySsid", watcher.getCurrentNearbySsid());
             }
+            if (watcher.getLastAuthFailedSsid() != null) {
+                result.put("authFailedSsid", watcher.getLastAuthFailedSsid());
+            }
         } catch (Throwable ignored) {}
 
         return result;
@@ -739,6 +742,16 @@ public class GlobalRelayPlugin extends Plugin {
         } catch (Throwable t) {
             call.reject("Failed to sync watcher config: " + t.getMessage());
         }
+    }
+
+    @PluginMethod
+    public void clearAuthFailed(PluginCall call) {
+        try {
+            NetworkWatcher.getInstance(getContext()).clearLastAuthFailedSsid();
+        } catch (Throwable ignored) {}
+        com.getcapacitor.JSObject res = new com.getcapacitor.JSObject();
+        res.put("success", true);
+        call.resolve(res);
     }
 
     @PluginMethod

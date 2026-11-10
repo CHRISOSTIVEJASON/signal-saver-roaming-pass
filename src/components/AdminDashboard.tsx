@@ -12,7 +12,7 @@ import type { MeshLink } from "@/lib/relay";
 import { CaptiveCredentialsDialog } from './CaptiveCredentialsDialog';
 import { saveShared } from '@/lib/cloud-cache';
 import { useConfig, useDevice } from "@/components/Gates";
-import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode, useAppVersion, useServiceStatus, useExemptedNumbers, useOffers, type PassOffer, useBlockedNumbers, type BlockedNumber } from "@/lib/store";
+import { KEYS, emptyRelay, uid, type RelayLog, useStored, write, read, type Device, defaultDevice, type Network, type PayConfig, type Session, type Txn, getPasscode, useAppVersion, useServiceStatus, useExemptedNumbers, useOffers, type PassOffer, useBlockedNumbers, type BlockedNumber, useNetworkAlerts, resolveNetworkAlert, type NetworkAlert } from "@/lib/store";
 
 const GB_PER_HOUR = 0.35;
 
@@ -26,7 +26,9 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
   const [networks] = useStored<Network[]>(KEYS.networks, []);
   const [status] = useServiceStatus();
   const [blocked, setBlocked] = useBlockedNumbers();
-  const [settingsDialog, setSettingsDialog] = useState<"service" | "passcode" | "app" | "payhero" | "offers" | "exempted" | "blocked" | "ledger" | null>(null);
+  const [alerts] = useNetworkAlerts();
+  const unresolvedAlerts = alerts.filter((a) => !a.resolved);
+  const [settingsDialog, setSettingsDialog] = useState<"service" | "passcode" | "app" | "payhero" | "offers" | "exempted" | "blocked" | "ledger" | "alerts" | null>(null);
   const [now, setNow] = useState(Date.now());
   const fetchCloudRecords = useServerFn(getCloudTransactionsAndSessions);
   const toggleFreeze = useServerFn(toggleFreezeSession);
@@ -236,6 +238,22 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
         <Metric icon={<Database />} label="Data GB" value={gb.toFixed(2)} />
       </div>
 
+      {unresolvedAlerts.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setSettingsDialog("alerts")}
+          className="flex w-full items-center justify-between gap-2 rounded-xl border border-destructive/40 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive transition hover:bg-destructive/15 text-left"
+        >
+          <div className="flex items-center gap-2">
+            <ShieldAlert className="h-4 w-4 shrink-0 text-destructive animate-pulse" />
+            <span>
+              <strong>{unresolvedAlerts.length} Network Alert{unresolvedAlerts.length > 1 ? "s" : ""}:</strong> WPA2 password mismatch on router ({unresolvedAlerts.map((a) => a.ssid).join(", ")})
+            </span>
+          </div>
+          <span className="font-semibold underline shrink-0">Review Alert</span>
+        </button>
+      )}
+
       <div role="tablist" className="sticky top-0 z-10 grid grid-cols-4 gap-1 rounded-xl bg-background/90 p-1 backdrop-blur">
         {tabs.map((t) => (
           <Button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
@@ -313,13 +331,99 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       {tab === "set" && (
         <div className="space-y-3">
           <p className="px-1 text-xs text-muted-foreground">Tap an action to open its focused settings dialog.</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <AdminAction icon={status.active ? <Power className="h-5 w-5" /> : <PowerOff className="h-5 w-5" />} label="Master Service Switch" detail={status.active ? "Currently online" : "Currently closed"} onClick={() => setSettingsDialog("service")} tone={!status.active ? "danger" : "default"} />
             <AdminAction icon={<KeyRound className="h-5 w-5" />} label="Change Passcode" detail="Admin access security" onClick={() => setSettingsDialog("passcode")} />
             <AdminAction icon={<Smartphone className="h-5 w-5" />} label="App Updates / APK" detail={`Installed v${runningVer}`} onClick={() => setSettingsDialog("app")} />
+            <AdminAction icon={<ShieldAlert className="h-5 w-5" />} label="Network Alerts" detail={unresolvedAlerts.length > 0 ? `${unresolvedAlerts.length} router alerts` : "All networks normal"} onClick={() => setSettingsDialog("alerts")} tone={unresolvedAlerts.length > 0 ? "danger" : "default"} />
           </div>
         </div>
       )}
+
+      <Dialog open={settingsDialog === "alerts"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
+        <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-destructive" />
+              Network Authentication Alerts
+            </DialogTitle>
+            <DialogDescription>
+              One-time alerts triggered by devices when a stamped WPA2 network's password changes on the router.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {unresolvedAlerts.length === 0 ? (
+              <div className="rounded-xl border border-border bg-secondary/20 p-6 text-center">
+                <ShieldCheck className="mx-auto h-8 w-8 text-primary/70 mb-2" />
+                <p className="text-sm font-semibold">No Active Network Alerts</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  All stamped WPA2 networks are authenticating normally. If any router password changes, a one-time alert will appear here.
+                </p>
+              </div>
+            ) : (
+              unresolvedAlerts.map((alert) => (
+                <div key={alert.id} className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-sm">{alert.ssid}</span>
+                        <span className="rounded bg-destructive/15 px-2 py-0.5 text-[10px] font-medium text-destructive">
+                          Password Changed
+                        </span>
+                      </div>
+                      {alert.venue && <p className="text-xs text-muted-foreground mt-0.5">Venue: {alert.venue}</p>}
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Detected: {new Date(alert.detectedAt).toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-background/80 p-2.5 text-xs text-muted-foreground">
+                    The router rejected the stored WPA2 password. Update the password below so devices can reconnect automatically.
+                  </div>
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        resolveNetworkAlert(alert.id);
+                        toast.success(`Alert for ${alert.ssid} dismissed`);
+                      }}
+                      className="h-8 text-xs"
+                    >
+                      Dismiss
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const newPass = window.prompt(`Enter new WPA2 password for ${alert.ssid}:`);
+                        if (newPass !== null && newPass.trim()) {
+                          const updatedNets = networks.map((n) =>
+                            n.ssid.trim().toLowerCase() === alert.ssid.trim().toLowerCase()
+                              ? { ...n, password: newPass.trim() }
+                              : n
+                          );
+                          setNetworks(updatedNets);
+                          void saveShared(KEYS.networks, updatedNets).catch(() => {});
+                          resolveNetworkAlert(alert.id);
+                          toast.success(`Password for ${alert.ssid} updated and alert resolved!`);
+                        }
+                      }}
+                      className="h-8 bg-primary text-xs font-semibold text-primary-foreground"
+                    >
+                      Update Password
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex justify-end pt-2">
+            <Button variant="outline" size="sm" onClick={() => setSettingsDialog(null)} className="h-9 text-xs" type="button">
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={settingsDialog === "service"} onOpenChange={(open) => !open && setSettingsDialog(null)}>
         <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-lg">
@@ -1535,6 +1639,26 @@ function PoolManager() {
                     </div>
                       <div className="truncate font-mono text-[11px] text-muted-foreground">{n.bssid}{n.venue ? ` • ${n.venue}` : ""}</div>
                     </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      title={n.password ? "Change WPA2 Password" : "Set WPA2 Password"}
+                      onClick={() => {
+                        const newPass = window.prompt(`Enter WPA2 password for ${n.ssid}:`, n.password || "");
+                        if (newPass !== null) {
+                          const updated = networks.map((x) =>
+                            x.id === n.id ? { ...x, password: newPass.trim() || undefined } : x
+                          );
+                          setNetworks(updated);
+                          void saveShared(KEYS.networks, updated).catch(() => {});
+                          resolveNetworkAlert(n.ssid);
+                          toast.success(`Password for ${n.ssid} saved!`);
+                        }
+                      }}
+                      className="h-8 w-8 rounded-lg text-accent hover:bg-accent/10"
+                    >
+                      <Edit2 className="h-3.5 w-3.5" />
+                    </Button>
                     <Button variant="outline" size="icon" title="Captive Portal Login" onClick={() => setEditing(n)} className="h-8 w-8 rounded-lg text-primary hover:bg-primary/10">
                       <KeyRound className="h-3.5 w-3.5" />
                     </Button>

@@ -105,6 +105,7 @@ export const KEYS = {
   exemptedNumbers: "gn_exempted_numbers",
   blockedNumbers: "gn_blocked_numbers",
   offers: "gn_offers",
+  networkAlerts: "gn_network_alerts",
 };
 
 export const defaultConfig: PayConfig = { apiToken: "", username: "", password: "", channelId: "", live: false, apkUrl: "", latestVersion: "1.0.0", updateRequired: false };
@@ -318,6 +319,71 @@ export function useBlockedNumbers() {
 }
 
 
+
+
+export type NetworkAlert = {
+  id: string;
+  ssid: string;
+  bssid?: string;
+  venue?: string;
+  type: "password_mismatch" | "auth_failed";
+  detectedAt: number;
+  resolved: boolean;
+};
+
+export const defaultAlerts: NetworkAlert[] = [];
+
+export function useNetworkAlerts() {
+  return useStored<NetworkAlert[]>(KEYS.networkAlerts, defaultAlerts);
+}
+
+export function recordNetworkAlert(ssid: string, bssid?: string, venue?: string): boolean {
+  if (!ssid || !ssid.trim()) return false;
+  const current = read<NetworkAlert[]>(KEYS.networkAlerts, []);
+  const normalizedSsid = ssid.trim();
+  const alertId = "alert_" + normalizedSsid.toLowerCase().replace(/[^a-z0-9]/g, "_");
+
+  const existing = current.find((a) => a.id === alertId || a.ssid.toLowerCase() === normalizedSsid.toLowerCase());
+  if (existing && !existing.resolved) {
+    return false; // Already reported once and currently open - deduplicate!
+  }
+
+  const updated: NetworkAlert[] = existing
+    ? current.map((a) =>
+        a.id === existing.id
+          ? { ...a, resolved: false, detectedAt: Date.now(), bssid: bssid || a.bssid, venue: venue || a.venue }
+          : a
+      )
+    : [
+        {
+          id: alertId,
+          ssid: normalizedSsid,
+          bssid: bssid ?? undefined,
+          venue: venue ?? undefined,
+          type: "password_mismatch",
+          detectedAt: Date.now(),
+          resolved: false,
+        },
+        ...current,
+      ];
+
+  write(KEYS.networkAlerts, updated);
+  void saveShared(KEYS.networkAlerts, updated).catch(() => {});
+  return true;
+}
+
+export function resolveNetworkAlert(alertIdOrSsid: string) {
+  const current = read<NetworkAlert[]>(KEYS.networkAlerts, []);
+  const target = alertIdOrSsid.trim().toLowerCase();
+  const updated = current.map((a) => {
+    if (a.id.toLowerCase() === target || a.ssid.toLowerCase() === target) {
+      return { ...a, resolved: true };
+    }
+    return a;
+  });
+  write(KEYS.networkAlerts, updated);
+  void saveShared(KEYS.networkAlerts, updated).catch(() => {});
+}
 
 export function getPersistedPhone(): string {
   if (typeof window === "undefined") return "";
