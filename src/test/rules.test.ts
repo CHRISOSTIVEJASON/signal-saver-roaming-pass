@@ -72,3 +72,16 @@ describe("Admin user wipeout & factory reset", () => {
     expect(wipedResponse.online).toBe(false);
   });
 });
+
+import { shouldPromptMobileData } from "@/lib/rules";
+describe("mobile data smart prompt check", () => {
+  it("does not prompt when user is online and no network failure occurred", () => {
+    expect(shouldPromptMobileData(true, false)).toBe(false);
+  });
+  it("prompts when user is offline", () => {
+    expect(shouldPromptMobileData(false, false)).toBe(true);
+  });
+  it("prompts when payment attempt failed due to network unreachable even if online flag was true", () => {
+    expect(shouldPromptMobileData(true, true)).toBe(true);
+  });
+});

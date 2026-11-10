@@ -106,3 +106,13 @@ export function shouldAlertNetwork(lastAlertTime: number, now: number, cooldownM
   if (!lastAlertTime || lastAlertTime <= 0) return true;
   return now - lastAlertTime >= cooldownMs;
 }
+
+/**
+ * Evaluates whether an explicit Mobile Data prompt should be shown.
+ * When the user has an active connection (online === true and no network failure),
+ * we return false so the UI proceeds directly without showing redundant mobile data notices.
+ * When offline or when the payment fetch failed due to connectivity, we return true to guide the user.
+ */
+export function shouldPromptMobileData(isOnline: boolean, failedDueToNetwork = false): boolean {
+  return !isOnline || failedDueToNetwork;
+}

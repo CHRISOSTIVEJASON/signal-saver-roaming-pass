@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck } from "lucide-react";
+import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck, WifiOff } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState } from "@/lib/rules";
 import { KEYS, defaultDevice, defaultConfig, read, recordRelayTick, uid, useStored, useBeepAlerts, getBeepAlertsEnabled, useExemptedNumbers, useOffers, useServiceStatus, type Device, type Network, type Session, type Txn, type PayConfig } from "@/lib/store";
@@ -171,6 +172,25 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const [passId, setPassId] = useState<string>(offers[0]?.id || "p30");
   const [phone, setPhone] = useState(() => getPersistedPhone() || "");
   const [busy, setBusy] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator !== "undefined" ? navigator.onLine : true));
+  const [dataPromptOpen, setDataPromptOpen] = useState(false);
+  const [networkErrorReason, setNetworkErrorReason] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      setNetworkErrorReason(null);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
   const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
   const pass = getPass(passId, offers);
 
@@ -238,6 +258,29 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
 
   const updateTxn = (id: string, patch: Partial<Txn>) =>
     setTxns((p) => p.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+
+  async function handlePayClick() {
+    const msisdn = normalizePhone(phone);
+    if (!msisdn) {
+      toast.error("Enter a valid Safaricom number (07… or 01…)");
+      return;
+    }
+
+    if (existingSession && existingSession.remainingMs > 0) {
+      toast.error(`You already have an active pass with ${formatClock(existingSession.remainingMs)} remaining. Cannot join twice while active.`);
+      return;
+    }
+
+    // Smart check: If offline or captive hotspot without WAN, prompt procedural Step 1 & 2
+    if (!navigator.onLine) {
+      setNetworkErrorReason("You are currently on a local Wi-Fi without active internet. Safaricom requires Mobile Data turned on to deliver the STK PIN prompt.");
+      setDataPromptOpen(true);
+      return;
+    }
+
+    // When online, proceed straight to pay without showing mobile data reminder
+    await pay();
+  }
 
   async function pay() {
     const msisdn = normalizePhone(phone);
@@ -340,9 +383,16 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         onActivated(st.session);
         toast.success("Demo pass activated — no money charged (Test mode)");
       }
-    } catch (e) {
+    } catch (e: any) {
       updateTxn(currentTxnId, { status: "Failed" });
-      toast.error(e instanceof Error ? e.message : "Payment failed");
+      const msg = String(e instanceof Error ? e.message : e || "");
+      const isNetErr = !navigator.onLine || /network|failed to fetch|fetch failed|load failed|internet|timeout/i.test(msg);
+      if (isNetErr) {
+        setNetworkErrorReason("Could not reach payment gateway over current Wi-Fi. Turn on Mobile Data (no bundles needed) to receive your STK PIN prompt.");
+        setDataPromptOpen(true);
+      } else {
+        toast.error(msg || "Payment failed");
+      }
     } finally {
       setBusy(null);
     }
@@ -468,7 +518,13 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           <input id="phone" aria-label="M-Pesa phone number" inputMode="tel" placeholder="M-Pesa number 07XX XXX XXX" value={phone} onChange={(e) => setPhone(e.target.value)}
             className="h-12 w-full bg-transparent font-mono text-base outline-none" disabled={!!busy} />
         </div>
-        <Button onClick={pay} disabled={!!busy}
+        {!isOnline && (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-400">
+            <WifiOff className="h-4 w-4 shrink-0 text-amber-400" />
+            <span className="leading-snug">Hotspot offline or pending pass. Turn on Mobile Data (no bundles needed) to receive your STK PIN prompt.</span>
+          </div>
+        )}
+        <Button onClick={handlePayClick} disabled={!!busy}
           className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary font-semibold text-primary-foreground transition hover:brightness-110 disabled:opacity-70">
           {busy ? <><Loader2 className="h-4 w-4 animate-spin" />{busy}</> : <>⚡ Pay KES {pass.amount} via M-Pesa</>}
         </Button>

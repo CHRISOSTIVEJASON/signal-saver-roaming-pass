@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <title>Global Networks • Roaming Pass</title>
+  <style>
+    :root {
+      --bg: #0c0e14;
+      --card: #141820;
+      --border: #262c36;
+      --primary: #00ff9d;
+      --primary-dim: rgba(0, 255, 157, 0.12);
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --amber: #e3b341;
+      --amber-dim: rgba(227, 179, 65, 0.12);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      width: 100%;
+      max-width: 400px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+    }
+    .header {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      color: var(--primary);
+    }
+    .subtitle {
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+    .active-banner {
+      display: none;
+      background: var(--primary-dim);
+      border: 1px solid var(--primary);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 18px;
+      text-align: center;
+    }
+    .active-clock {
+      font-size: 24px;
+      font-weight: 800;
+      font-family: monospace;
+      color: var(--primary);
+      margin: 4px 0;
+    }
+    .net-banner {
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 12px;
+      margin-bottom: 18px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      line-height: 1.45;
+    }
+    .net-banner.offline {
+      background: var(--amber-dim);
+      border: 1px solid var(--amber);
+      color: var(--amber);
+    }
+    .net-banner.online {
+      background: var(--primary-dim);
+      border: 1px solid var(--primary);
+      color: var(--primary);
+    }
+    .pass-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .pass-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: left;
+    }
+    .pass-card.selected {
+      border-color: var(--primary);
+      background: var(--primary-dim);
+      box-shadow: 0 0 16px -4px var(--primary);
+    }
+    .pass-amount {
+      font-size: 22px;
+      font-weight: 800;
+      font-family: monospace;
+    }
+    .pass-currency {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .pass-label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .input-wrap {
+      margin-bottom: 14px;
+    }
+    .input-wrap label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .phone-input {
+      width: 100%;
+      height: 46px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: #fff;
+      font-size: 15px;
+      font-family: monospace;
+      padding: 0 14px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .phone-input:focus {
+      border-color: var(--primary);
+    }
+    .btn-pay {
+      width: 100%;
+      height: 48px;
+      background: var(--primary);
+      color: #04090c;
+      font-weight: 800;
+      font-size: 14px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: filter 0.2s;
+    }
+    .btn-pay:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .hint {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      margin-top: 10px;
+    }
+    .step-modal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.75);
+      backdrop-filter: blur(4px);
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      z-index: 100;
+    }
+    .modal-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 22px;
+      max-width: 360px;
+      width: 100%;
+    }
+    .modal-step {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .modal-num {
+      background: var(--primary);
+      color: #04090c;
+      font-weight: bold;
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title">GLOBAL NETWORKS</div>
+      <div class="subtitle">Offline-First Roaming Pass</div>
+    </div>
+
+    <!-- Active Countdown Banner (if pass is active) -->
+    <div id="activeBanner" class="active-banner">
+      <div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Active Pass Running</div>
+      <div id="activeClock" class="active-clock">00:00:00</div>
+      <div id="activePhone" style="font-size: 11px; color: var(--muted);"></div>
+    </div>
+
+    <!-- Connectivity Banner (Hidden when normal online) -->
+    <div id="netBanner" class="net-banner offline">
+      <span style="font-size: 16px;">⚠️</span>
+      <div>
+        <strong>Hotspot Offline or Pending Pass</strong><br>
+        Turn on Mobile Data (no bundles needed) to receive your Safaricom M-Pesa STK PIN prompt.
+      </div>
+    </div>
+
+    <!-- Passes -->
+    <div class="pass-grid" id="passGrid">
+      <div class="pass-card selected" onclick="selectPass('p15', 10, '15 Hours Access')">
+        <div class="pass-amount"><span class="pass-currency">KES </span>10</div>
+        <div class="pass-label">15 Hours Access</div>
+      </div>
+      <div class="pass-card" onclick="selectPass('p30', 18, '30 Hours Access')">
+        <div class="pass-amount"><span class="pass-currency">KES </span>18</div>
+        <div class="pass-label">30 Hours Access</div>
+      </div>
+    </div>
+
+    <!-- Phone input -->
+    <div class="input-wrap">
+      <label for="phone">Safaricom Phone Number</label>
+      <input type="tel" id="phone" class="phone-input" placeholder="07XX XXX XXX or 01XX XXX XXX" />
+    </div>
+
+    <button id="payBtn" class="btn-pay" onclick="handlePayClick()">
+      ⚡ Pay KES 10 via M-Pesa
+    </button>
+    <div id="statusText" class="hint">You will get a prompt on your phone. Enter your PIN to confirm.</div>
+  </div>
+
+  <!-- Step-by-Step Mobile Data Modal -->
+  <div id="stepModal" class="step-modal">
+    <div class="modal-box">
+      <h3 style="font-size: 15px; margin-bottom: 12px; color: #fff;">Turn On Mobile Data</h3>
+      <div style="background: rgba(0,255,157,0.06); border: 1px solid rgba(0,255,157,0.2); border-radius: 12px; padding: 12px; margin-bottom: 16px;">
+        <div class="modal-step">
+          <span class="modal-num">1</span>
+          <span><strong>Turn ON Mobile Data</strong> (swipe down from top). <span style="color: var(--primary);">Zero bundle balance required</span> — Safaricom sends M-Pesa prompts for free.</span>
+        </div>
+        <div class="modal-step" style="margin-bottom: 0;">
+          <span class="modal-num">2</span>
+          <span>Tap <strong>Send STK Prompt</strong> below to receive your PIN prompt instantly.</span>
+        </div>
+      </div>
+      <button class="btn-pay" onclick="confirmMobileDataAndPay()" style="margin-bottom: 8px;">
+        ⚡ Mobile Data is ON — Send STK Prompt
+      </button>
+      <button onclick="closeModal()" style="width: 100%; height: 36px; background: transparent; border: none; color: var(--muted); font-size: 12px; cursor: pointer;">
+        Cancel
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let selectedPass = { id: 'p15', amount: 10, label: '15 Hours Access' };
+    const savedPhone = localStorage.getItem('gn_phone') || '';
+    if (savedPhone) {
+      document.getElementById('phone').value = savedPhone;
+    }
+
+    function updateNetworkStatus() {
+      const banner = document.getElementById('netBanner');
+      if (navigator.onLine) {
+        banner.style.display = 'none';
+      } else {
+        banner.style.display = 'flex';
+      }
+    }
+    window.addEventListener('online', updateNetworkStatus);
+    window.addEventListener('offline', updateNetworkStatus);
+    updateNetworkStatus();
+
+    function selectPass(id, amount, label) {
+      selectedPass = { id, amount, label };
+      const cards = document.querySelectorAll('.pass-card');
+      cards.forEach(c => c.classList.remove('selected'));
+      event.currentTarget.classList.add('selected');
+      document.getElementById('payBtn').innerText = `⚡ Pay KES ${amount} via M-Pesa`;
+    }
+
+    function normalizePhone(val) {
+      const d = (val || '').replace(/\D/g, '');
+      if (/^0[17]\d{8}$/.test(d)) return '254' + d.slice(1);
+      if (/^254[17]\d{8}$/.test(d)) return d;
+      if (/^[17]\d{8}$/.test(d)) return '254' + d;
+      return null;
+    }
+
+    function handlePayClick() {
+      const phoneInput = document.getElementById('phone').value;
+      const normalized = normalizePhone(phoneInput);
+      if (!normalized) {
+        alert('Enter a valid Safaricom number (07… or 01…)');
+        return;
+      }
+      localStorage.setItem('gn_phone', normalized);
+
+      // If offline, display procedural 2-step modal
+      if (!navigator.onLine) {
+        document.getElementById('stepModal').style.display = 'flex';
+        return;
+      }
+
+      // If online, proceed straight to pay without showing modal
+      executePay(normalized);
+    }
+
+    function confirmMobileDataAndPay() {
+      closeModal();
+      const phoneInput = document.getElementById('phone').value;
+      const normalized = normalizePhone(phoneInput);
+      executePay(normalized);
+    }
+
+    function closeModal() {
+      document.getElementById('stepModal').style.display = 'none';
+    }
+
+    async function executePay(msisdn) {
+      const btn = document.getElementById('payBtn');
+      const statusText = document.getElementById('statusText');
+      btn.disabled = true;
+      btn.innerText = 'Sending M-Pesa prompt…';
+      statusText.innerText = 'Connecting to Safaricom Daraja gateway…';
+
+      try {
+        const response = await fetch('https://signal-saver-roaming-pass.lovable.app/api/public/stk-push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: msisdn, amount: selectedPass.amount, passId: selectedPass.id })
+        });
+        const data = await response.json();
+        if (data && (data.success || data.CheckoutRequestID)) {
+          btn.innerText = 'Prompt Sent! Enter PIN';
+          statusText.innerText = 'Check your phone screen and enter your M-Pesa PIN.';
+        } else {
+          throw new Error((data && data.error) || 'Payment gateway unreachable');
+        }
+      } catch (err) {
+        // If fetch fails due to offline/captive routing, trigger the mobile data guidance
+        document.getElementById('stepModal').style.display = 'flex';
+        btn.disabled = false;
+        btn.innerText = `⚡ Pay KES ${selectedPass.amount} via M-Pesa`;
+        statusText.innerText = 'Ensure Mobile Data is turned on to receive your prompt.';
+      }
+    }
+  </script>
+</body>
+</html>
