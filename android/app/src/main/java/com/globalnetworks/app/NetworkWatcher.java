@@ -472,8 +472,8 @@ public class NetworkWatcher {
         if (Build.VERSION.SDK_INT < 29 && wifiManager != null && pass != null && !pass.trim().isEmpty()) {
             try {
                 android.net.wifi.WifiConfiguration conf = new android.net.wifi.WifiConfiguration();
-                conf.SSID = """ + ssid + """;
-                conf.preSharedKey = """ + pass.trim() + """;
+                conf.SSID = "\"" + ssid + "\"";
+                conf.preSharedKey = "\"" + pass.trim() + "\"";
                 int netId = wifiManager.addNetwork(conf);
                 if (netId != -1) {
                     wifiManager.disconnect();
