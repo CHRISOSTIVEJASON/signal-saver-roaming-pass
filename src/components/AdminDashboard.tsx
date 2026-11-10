@@ -44,6 +44,18 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       await wipeSessionFn({ data: { sessionId: wipeTarget.id } });
       setCloudSessions((prev) => prev.filter((s) => s.id !== wipeTarget.id));
       setLocalSessions((prev) => prev.filter((s) => s.id !== wipeTarget.id));
+      // Clear local storage if target was on this device
+      const local = read<Session[]>(KEYS.sessions, []);
+      write(KEYS.sessions, local.filter((s) => s.id !== wipeTarget.id && normalizePhone(s.phone) !== normalizePhone(wipeTarget.phone)));
+      const active = read<Session | null>(KEYS.active, null);
+      if (active && (active.id === wipeTarget.id || normalizePhone(active.phone) === normalizePhone(wipeTarget.phone))) {
+        write(KEYS.active, null);
+      }
+      if (Capacitor.isNativePlatform()) {
+        void GlobalRelay.stop().catch(() => {});
+      }
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.sessions }));
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.active }));
       toast.success(`User +${wipeTarget.phone} wiped out and device reset to factory.`);
       setWipeTarget(null);
     } catch (err: any) {
@@ -59,6 +71,13 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       const res = await wipeAllSessionsFn();
       setCloudSessions([]);
       setLocalSessions([]);
+      write(KEYS.sessions, []);
+      write(KEYS.active, null);
+      if (Capacitor.isNativePlatform()) {
+        void GlobalRelay.stop().catch(() => {});
+      }
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.sessions }));
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.active }));
       toast.success(`Wiped all active users (${res?.count || 0} sessions). All devices reset to factory.`);
       setWipeAllOpen(false);
     } catch (err: any) {
@@ -100,7 +119,20 @@ export function AdminDashboard({ onExit }: { onExit: () => void }) {
       setLocalSessions((prev) =>
         prev.map((s) => (s.id === sessionId ? { ...s, frozen: freeze, online: freeze ? false : s.online } : s))
       );
-      toast.success(freeze ? "❄️ Pass frozen! Internet cut simultaneously." : "✅ Pass unfrozen! Access resumed.");
+      // Synchronize local storage immediately
+      const localSess = read<Session[]>(KEYS.sessions, []);
+      const updatedLocalSess = localSess.map((s) => (s.id === sessionId ? { ...s, frozen: freeze, online: freeze ? false : s.online } : s));
+      write(KEYS.sessions, updatedLocalSess);
+      const activeSess = read<Session | null>(KEYS.active, null);
+      if (activeSess && activeSess.id === sessionId) {
+        write(KEYS.active, { ...activeSess, frozen: freeze, online: freeze ? false : activeSess.online });
+      }
+      if (freeze && Capacitor.isNativePlatform()) {
+        void GlobalRelay.stop().catch(() => {});
+      }
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.sessions }));
+      window.dispatchEvent(new CustomEvent("gn-store", { detail: KEYS.active }));
+      toast.success(freeze ? "❄️ Pass frozen! Internet access cut immediately." : "✅ Pass unfrozen! Access resumed.");
     } catch (err: any) {
       toast.error(err?.message || "Failed to update freeze state");
     }

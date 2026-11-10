@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck, WifiOff, CreditCard } from "lucide-react";
+import { AlertTriangle, Home, Loader2, Search, Smartphone, Snowflake, Zap, Signal, MapPin, Volume2, VolumeX, Laptop, Share2, Wifi, Copy, Check, Users, ShieldCheck, WifiOff, CreditCard } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { toast } from "sonner";
 import { PASSES, connectionState, formatClock, getPass, normalizePhone, tick, shouldAlertNetwork, ALERT_COOLDOWN_MS, type WifiState, MANUAL_PAYBILL, MANUAL_ACCOUNT } from "@/lib/rules";
@@ -219,6 +219,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const [dynamicAccount, setDynamicAccount] = useState<string>(MANUAL_ACCOUNT);
   const [ticketId, setTicketId] = useState<string>("13205");
   const [ticketLoading, setTicketLoading] = useState(false);
+  const [paybillFallbackOpen, setPaybillFallbackOpen] = useState(false);
 
   const fetchDynamicAccount = async (targetPhone: string, targetPassId: string) => {
     const msisdn = normalizePhone(targetPhone);
@@ -390,10 +391,10 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
       return;
     }
 
-    // Smart check: If offline or captive hotspot without WAN, prompt procedural Step 1 & 2
+    // Smart check: If offline or captive hotspot without WAN, open procedural Paybill fallback
     if (!navigator.onLine) {
-      setNetworkErrorReason("You are currently on a local Wi-Fi without active internet. Safaricom requires Mobile Data turned on to deliver the STK PIN prompt.");
-      setDataPromptOpen(true);
+      void fetchDynamicAccount(msisdn, pass.id);
+      setPaybillFallbackOpen(true);
       return;
     }
 
@@ -505,13 +506,9 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     } catch (e: any) {
       updateTxn(currentTxnId, { status: "Failed" });
       const msg = String(e instanceof Error ? e.message : e || "");
-      const isNetErr = !navigator.onLine || /network|failed to fetch|fetch failed|load failed|internet|timeout/i.test(msg);
-      if (isNetErr) {
-        setNetworkErrorReason("Could not reach payment gateway over current Wi-Fi. Turn on Mobile Data (no bundles needed) to receive your STK PIN prompt.");
-        setDataPromptOpen(true);
-      } else {
-        toast.error(msg || "Payment failed");
-      }
+      void fetchDynamicAccount(msisdn, pass.id);
+      setPaybillFallbackOpen(true);
+      toast.error(msg || "Failed to push STK prompt");
     } finally {
       setBusy(null);
     }
@@ -649,86 +646,17 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         </Button>
         <p className="text-center text-xs text-muted-foreground">You'll get a prompt on your phone. Enter your PIN to confirm.</p>
 
-        {/* Option 2: Dynamic Offline Paybill (Fully Automated via FinoQ / PayHero) */}
-        <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-left space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-              <CreditCard className="h-3.5 w-3.5 text-primary" />
-              Dynamic Paybill (Option 2 Automated)
-            </span>
-            <span className="text-[10px] rounded bg-primary/10 px-1.5 py-0.5 text-primary font-mono font-medium flex items-center gap-1">
-              {ticketLoading ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-              Ticket #{ticketId}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-            <div className="rounded-lg border border-border bg-background/80 p-2">
-              <span className="block text-[10px] text-muted-foreground uppercase font-sans">Business No (Paybill)</span>
-              <div className="flex items-center justify-between mt-1">
-                <span className="font-bold text-foreground text-sm tracking-wide">{MANUAL_PAYBILL}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => copyManualField(MANUAL_PAYBILL, "Paybill")}
-                >
-                  {copiedField === "Paybill" ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
-                </Button>
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-border bg-background/80 p-2">
-              <div className="flex items-center justify-between">
-                <span className="block text-[10px] text-muted-foreground uppercase font-sans">Account Number</span>
-                <button
-                  type="button"
-                  onClick={() => fetchDynamicAccount(phone, pass.id)}
-                  disabled={ticketLoading || !normalizePhone(phone)}
-                  className="text-[10px] text-primary hover:underline disabled:opacity-50"
-                  title="Generate new CheckoutRequestID"
-                >
-                  {ticketLoading ? "Generating..." : "Refresh #"}
-                </button>
-              </div>
-              <div className="flex items-center justify-between mt-1">
-                <span className="font-bold text-foreground text-sm tracking-wide truncate">{dynamicAccount}</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => copyManualField(dynamicAccount, "Account Number")}
-                >
-                  {copiedField === "Account Number" ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <p className="text-[11px] text-muted-foreground leading-tight">
-            Pay KES {pass.amount} (or any amount &ge;10) to Paybill <strong>{MANUAL_PAYBILL}</strong> with Account <strong>{dynamicAccount}</strong>. Funds settle into your FinoQ wallet float, and FinoQ confirms ticket #{ticketId} to unlock internet automatically!
-          </p>
-
-          <form onSubmit={handleVerifyReceipt} className="flex gap-1.5 pt-1">
-            <input
-              type="text"
-              placeholder="M-Pesa Receipt (e.g. TL123456)"
-              value={manualReceipt}
-              onChange={(e) => setManualReceipt(e.target.value)}
-              className="flex-1 h-8 rounded-md border border-input bg-background px-2.5 text-xs font-mono text-foreground uppercase placeholder:normal-case placeholder:text-muted-foreground"
-            />
-            <Button
-              type="submit"
-              size="sm"
-              variant="outline"
-              disabled={manualVerifying || !manualReceipt.trim()}
-              className="h-8 px-2.5 text-xs font-medium shrink-0"
-            >
-              {manualVerifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Verify Code"}
-            </Button>
-          </form>
+        <div className="text-center pt-0.5">
+          <button
+            type="button"
+            onClick={() => {
+              void fetchDynamicAccount(phone, pass.id);
+              setPaybillFallbackOpen(true);
+            }}
+            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4"
+          >
+            Having trouble receiving STK? Pay via Paybill
+          </button>
         </div>
         <div className="grid grid-cols-1 gap-2 pt-2 min-[380px]:grid-cols-2">
           <Button
@@ -751,6 +679,103 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
           </Button>
         </div>
       </div>
+      {/* Procedural Fallback Dialog for STK Failures */}
+      <Dialog open={paybillFallbackOpen} onOpenChange={setPaybillFallbackOpen}>
+        <DialogContent className="max-w-sm p-5 space-y-3">
+          <DialogHeader className="space-y-1 text-left">
+            <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-warning" />
+              FAILED TO PUSH STK?
+            </DialogTitle>
+            <p className="text-xs font-semibold text-primary uppercase font-mono tracking-wide">
+              PROCEED WITH PAYBILL:
+            </p>
+          </DialogHeader>
+
+          <div className="space-y-2.5 pt-1 font-mono text-xs">
+            <div className="rounded-lg border border-border bg-secondary/40 p-2.5">
+              <span className="block text-[10px] text-muted-foreground uppercase font-sans font-medium">Business No (Paybill)</span>
+              <div className="flex items-center justify-between mt-1">
+                <span className="font-bold text-foreground text-base tracking-wider">{MANUAL_PAYBILL}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs font-medium gap-1"
+                  onClick={() => copyManualField(MANUAL_PAYBILL, "Paybill")}
+                >
+                  {copiedField === "Paybill" ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+                  Copy
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-border bg-secondary/40 p-2.5">
+              <div className="flex items-center justify-between">
+                <span className="block text-[10px] text-muted-foreground uppercase font-sans font-medium">Account Number</span>
+                <button
+                  type="button"
+                  onClick={() => fetchDynamicAccount(phone, pass.id)}
+                  disabled={ticketLoading || !normalizePhone(phone)}
+                  className="text-[10px] text-primary hover:underline font-sans disabled:opacity-50"
+                  title="Generate new CheckoutRequestID"
+                >
+                  {ticketLoading ? "Generating..." : "Refresh #"}
+                </button>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="font-bold text-foreground text-sm tracking-wide truncate">{dynamicAccount}</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2 text-xs font-medium gap-1"
+                  onClick={() => copyManualField(dynamicAccount, "Account Number")}
+                >
+                  {copiedField === "Account Number" ? <Check className="h-3 w-3 text-primary" /> : <Copy className="h-3 w-3" />}
+                  Copy
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between px-1 text-xs text-muted-foreground font-sans">
+              <span>Amount:</span>
+              <span className="font-bold text-foreground font-mono">KES {pass.amount}</span>
+            </div>
+
+            <form onSubmit={handleVerifyReceipt} className="flex gap-1.5 pt-1">
+              <input
+                type="text"
+                placeholder="M-Pesa Receipt Code (e.g. TL123456)"
+                value={manualReceipt}
+                onChange={(e) => setManualReceipt(e.target.value)}
+                className="flex-1 h-9 rounded-lg border border-input bg-background px-2.5 text-xs font-mono text-foreground uppercase placeholder:normal-case placeholder:text-muted-foreground"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                disabled={manualVerifying || !manualReceipt.trim()}
+                className="h-9 px-3 text-xs font-semibold shrink-0"
+              >
+                {manualVerifying ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Verify Code"}
+              </Button>
+            </form>
+
+            <div className="pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-9 w-full text-xs font-medium"
+                onClick={() => setPaybillFallbackOpen(false)}
+              >
+                ← Back
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {restoreOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm" onClick={() => setRestoreOpen(false)}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-5 shadow-lg">

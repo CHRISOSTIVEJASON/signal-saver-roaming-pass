@@ -982,8 +982,45 @@ export const toggleFreezeSession = createServerFn({ method: 'POST' })
   }).parse(input))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.sessionId).maybeSingle();
-    if (!row) throw new Error('Session not found');
+    let { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.sessionId).maybeSingle();
+    if (!row) {
+      const { data: allSessions } = await supabaseAdmin.from('gn_sessions').select('*');
+      row = (allSessions || []).find((r) => {
+        const p = r.payload as any;
+        return p && (p.id === data.sessionId || p.phone === data.sessionId || normalizePhone(p.phone || '') === normalizePhone(data.sessionId));
+      }) || null;
+    }
+    if (!row) {
+      const { data: txns } = await supabaseAdmin.from('gn_transactions').select('*');
+      const txnRow = (txns || []).find((t) => {
+        const p = t.payload as any;
+        return p && (p.id === data.sessionId || p.phone === data.sessionId || normalizePhone(p.phone || '') === normalizePhone(data.sessionId));
+      });
+      if (txnRow) {
+        const tp = txnRow.payload as any;
+        const now = Date.now();
+        const payload: any = {
+          id: tp.id,
+          phone: tp.phone,
+          passId: tp.passId || 'p30',
+          remainingMs: 3600000,
+          totalMs: 3600000,
+          lastTick: now,
+          online: false,
+          startedAt: now,
+          frozen: data.frozen,
+          frozenAt: data.frozen ? now : undefined
+        };
+        await supabaseAdmin.from('gn_sessions').upsert({
+          id: tp.id,
+          user_id: tp.id,
+          payload: JSON.parse(JSON.stringify(payload)),
+          updated_at: new Date().toISOString()
+        });
+        return { ok: true, frozen: data.frozen, session: payload };
+      }
+      throw new Error('Session not found for ' + data.sessionId);
+    }
     const payload = (row.payload || {}) as any;
     payload.frozen = data.frozen;
     if (data.frozen) {
@@ -997,7 +1034,7 @@ export const toggleFreezeSession = createServerFn({ method: 'POST' })
     const { error } = await supabaseAdmin.from('gn_sessions').update({
       payload: JSON.parse(JSON.stringify(payload)),
       updated_at: new Date().toISOString()
-    }).eq('id', data.sessionId);
+    }).eq('id', row.id);
     if (error) throw new Error('Failed to update session freeze state: ' + error.message);
     return { ok: true, frozen: data.frozen, session: payload };
   });
@@ -1036,28 +1073,50 @@ export const wipeUserSession = createServerFn({ method: 'POST' })
   }).parse(input))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { data: row } = await supabaseAdmin.from('gn_sessions').select('*').eq('id', data.sessionId).maybeSingle();
-    const payload = (row?.payload || {}) as any;
-    const phone = normalizePhone(payload?.phone || '');
+    const { data: allSessions } = await supabaseAdmin.from('gn_sessions').select('*');
+    let phone = '';
+    const toDeleteIds: string[] = [];
+    for (const s of allSessions || []) {
+      const p = s.payload as any;
+      if (s.id === data.sessionId || p?.id === data.sessionId || p?.phone === data.sessionId || normalizePhone(p?.phone || '') === normalizePhone(data.sessionId)) {
+        phone = normalizePhone(p?.phone || '') || phone;
+        toDeleteIds.push(s.id);
+      }
+    }
+    if (toDeleteIds.length === 0) {
+      toDeleteIds.push(data.sessionId);
+    }
 
-    // 1. Delete this specific session record
-    await supabaseAdmin.from('gn_sessions').delete().eq('id', data.sessionId);
+    // Mark as wiped first so active streaming heartbeats receive { wiped: true } immediately
+    for (const id of toDeleteIds) {
+      const row = (allSessions || []).find((s) => s.id === id);
+      if (row) {
+        const p = (row.payload || {}) as any;
+        await supabaseAdmin.from('gn_sessions').update({
+          payload: { ...p, wiped: true, online: false, remainingMs: 0 },
+          updated_at: new Date().toISOString()
+        }).eq('id', id);
+      }
+    }
 
-    // 2. Wipe any sibling session records for this phone number
+    // Now remove session rows
+    for (const id of toDeleteIds) {
+      await supabaseAdmin.from('gn_sessions').delete().eq('id', id);
+    }
+
     if (phone) {
-      const { data: allSessions } = await supabaseAdmin.from('gn_sessions').select('*');
       for (const s of allSessions || []) {
         const p = s.payload as any;
-        if (p && (normalizePhone(p.phone || '') === phone || p.id === data.sessionId)) {
+        if (p && normalizePhone(p.phone || '') === phone) {
           await supabaseAdmin.from('gn_sessions').delete().eq('id', s.id);
         }
       }
 
-      // 3. Mark any activated transactions for this phone as Wiped to prevent auto-restore
+      // Mark any activated transactions for this phone as Wiped to prevent auto-restore
       const { data: allTxns } = await supabaseAdmin.from('gn_transactions').select('*');
       for (const t of allTxns || []) {
         const p = t.payload as any;
-        if (p && (normalizePhone(p.phone || '') === phone || p.passId === payload?.passId) && p.status === 'Activated') {
+        if (p && (normalizePhone(p.phone || '') === phone) && p.status === 'Activated') {
           p.status = 'Wiped';
           await supabaseAdmin.from('gn_transactions').update({
             payload: JSON.parse(JSON.stringify(p))
@@ -1073,8 +1132,17 @@ export const wipeAllUserSessions = createServerFn({ method: 'POST' })
   .validator((input?: Record<string, unknown>) => input ?? {})
   .handler(async () => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
-    const { data: allSessions } = await supabaseAdmin.from('gn_sessions').select('id');
+    const { data: allSessions } = await supabaseAdmin.from('gn_sessions').select('*');
     const count = allSessions?.length || 0;
+
+    // Mark all as wiped first so in-flight client heartbeats terminate internet immediately
+    for (const s of allSessions || []) {
+      const p = (s.payload || {}) as any;
+      await supabaseAdmin.from('gn_sessions').update({
+        payload: { ...p, wiped: true, online: false, remainingMs: 0 },
+        updated_at: new Date().toISOString()
+      }).eq('id', s.id);
+    }
 
     // Delete all session rows in gn_sessions
     if (count > 0) {

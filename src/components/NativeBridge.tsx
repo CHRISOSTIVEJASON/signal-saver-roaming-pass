@@ -57,7 +57,7 @@ export function NativeBridge() {
     void GlobalRelay.getState().then(update);
 
     const syncWatcher = () => {
-      const hasActivePass = sessionRef.current.some((s) => s.remainingMs > 0);
+      const hasActivePass = sessionRef.current.some((s) => s.remainingMs > 0 && !s.frozen);
       const poolSsids = poolRef.current.map((n) => n.ssid).filter(Boolean);
       const poolBssids = poolRef.current.map((n) => n.bssid).filter(Boolean);
       void GlobalRelay.syncWatcherConfig({ poolSsids, poolBssids, hasActivePass, soundAlerts: beepRef.current }).catch(() => {});
@@ -65,7 +65,7 @@ export function NativeBridge() {
 
     const check = () => {
       const device = read<Device>(KEYS.device, defaultDevice);
-      const active = sessionRef.current.some((s) => s.remainingMs > 0);
+      const active = sessionRef.current.some((s) => s.remainingMs > 0 && !s.frozen);
       const upstreamInPool =
         connectionState(
           device.currentWifi,
@@ -94,7 +94,7 @@ export function NativeBridge() {
   // Sync watcher config whenever sessions or networks change
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
-    const hasActivePass = sessions.some((s) => s.remainingMs > 0);
+    const hasActivePass = sessions.some((s) => s.remainingMs > 0 && !s.frozen);
     const poolSsids = networks.map((n) => n.ssid).filter(Boolean);
     const poolBssids = networks.map((n) => n.bssid).filter(Boolean);
     void GlobalRelay.syncWatcherConfig({ poolSsids, poolBssids, hasActivePass, soundAlerts: beepRef.current }).catch(() => {});
