@@ -9,6 +9,7 @@ export interface NativeState {
   nearbyPoolDetected?: boolean;
   nearbySsid?: string;
   authFailedSsid?: string;
+  connectedDirectly?: boolean;
 }
 
 export interface UpdateProgressData {

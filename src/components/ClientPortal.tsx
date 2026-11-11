@@ -27,7 +27,8 @@ function currentState(): { state: WifiState; ssid: string | undefined } {
           d.currentWifi,
           nets.map((n) => n.bssid),
           d.personalSsids,
-          nets.map((n) => n.ssid)
+          nets.map((n) => n.ssid),
+          d.connectedDirectly
         ),
     ssid: d.currentWifi?.ssid,
   };
@@ -44,16 +45,18 @@ function useWifiState() {
           device.currentWifi,
           nets.map((n) => n.bssid),
           device.personalSsids,
-          nets.map((n) => n.ssid)
+          nets.map((n) => n.ssid),
+          device.connectedDirectly
         ),
     ssid: device.currentWifi?.ssid,
     direct: relayProvidesConnection(device.relay, Date.now()),
+    connectedDirectly: Boolean(device.connectedDirectly),
   };
 }
 
 function LocationAlert() {
   const { state, direct } = useWifiState();
-  if (state === "pool" || direct) return null;
+  if (state === "pool" || state === "direct_pool" || direct || state === "personal") return null;
   return (
     <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
       <MapPin className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
@@ -183,7 +186,7 @@ export function ClientPortal() {
 
 
 function NetworkBadge() {
-  const { state, ssid } = useWifiState();
+  const { state, ssid, connectedDirectly } = useWifiState();
   const [device] = useStored<Device>(KEYS.device, defaultDevice);
   const [beepAlerts, setBeepAlerts] = useBeepAlerts();
 
@@ -193,7 +196,12 @@ function NetworkBadge() {
     toast.info(next ? "Nearby Wi-Fi sound alert enabled (3 beeps)" : "Nearby Wi-Fi sound alert muted");
   };
 
-  const badgeContent = state === "pool" ? (
+  const badgeContent = (state === "direct_pool" || connectedDirectly || (device.currentWifi && state === "personal")) ? (
+    <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-medium text-accent">
+      <Signal className="h-3.5 w-3.5" />
+      Connected directly • {ssid || "Wi-Fi"}
+    </span>
+  ) : state === "pool" ? (
     <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
       <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
       Network Connected • {ssid || "Pool"}
@@ -265,7 +273,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   const [, setTxns] = useStored<Txn[]>(KEYS.txns, []);
   const pass = getPass(passId, offers);
 
-  const { state, ssid, direct } = useWifiState();
+  const { state, ssid, direct, connectedDirectly } = useWifiState();
   const [device] = useStored<Device>(KEYS.device, defaultDevice);
   const isNetworkAvailable = state === "pool" || direct || Boolean(device.nearbyPoolDetected);
   const detectedName = ssid || device.nearbySsid || "Roaming Pool";
@@ -476,7 +484,8 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     const deviceId = getDeviceId();
     let currentTxnId = uid();
     try {
-      const r = await startPayment({ data: { phone: msisdn, passId: pass.id, deviceId, origin: typeof window !== "undefined" ? window.location.origin : undefined } });
+      const winOrigin = typeof window !== "undefined" ? window.location.origin : undefined;
+      const r = await startPayment({ data: { phone: msisdn, passId: pass.id, deviceId, ...(winOrigin ? { origin: winOrigin } : {}) } });
       currentTxnId = r.id;
       const ref = r.ref || ("GN" + uid());
 
@@ -726,7 +735,14 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
             </Button>
           </div>
         )}
-        {isNetworkAvailable && (
+        {(state === "direct_pool" || connectedDirectly || (device.currentWifi && state === "personal")) ? (
+          <div className="w-full flex items-center gap-2.5 rounded-xl border border-accent/30 bg-accent/10 p-3 text-xs text-accent-foreground shadow-sm">
+            <Home className="h-4 w-4 shrink-0 text-accent" />
+            <span className="text-left leading-relaxed">
+              You are using your own direct Wi-Fi. Buy a pass anytime to roam across all other hotspots.
+            </span>
+          </div>
+        ) : isNetworkAvailable ? (
           <div className="w-full flex items-center gap-2.5 rounded-xl border border-primary/40 bg-primary/10 p-3 text-xs text-primary shadow-sm animate-pulse">
             <Zap className="h-4 w-4 shrink-0 text-primary" />
             <div className="text-left leading-tight">
@@ -736,7 +752,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
               </span>
             </div>
           </div>
-        )}
+        ) : null}
         {cfg.live ? (
           <span className="inline-flex items-center gap-1.5 text-xs text-primary font-medium">
             <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
@@ -1315,12 +1331,14 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     let mounted = true;
     const syncStatus = async () => {
       try {
+        const isDirect = state === "direct_pool" || Boolean(deviceState.connectedDirectly);
         const res = await heartbeat({
           data: {
             id: session.id,
             bssid: deviceState.currentWifi?.bssid ?? null,
             relayReady: direct,
-            deviceId: getDeviceId()
+            deviceId: getDeviceId(),
+            directWifi: isDirect
           }
         });
         if (res && mounted) {
@@ -1372,10 +1390,11 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     const step = () => {
       const now = Date.now();
       const currentFrozen = Boolean(ref.current.frozen || session.frozen);
+      const isDirect = state === "direct_pool" || Boolean(deviceState.connectedDirectly);
       const isCompanion = Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId());
       const running = isCompanion
         ? (Boolean(session.online) && !suspended && !currentFrozen)
-        : (state === "pool" && !connecting && !suspended && !currentFrozen);
+        : (state === "pool" && !isDirect && !connecting && !suspended && !currentFrozen);
       // Cap each step so time spent closed, suspended or offline is never charged.
       update((s) => ({
         remainingMs: tick(s.remainingMs, s.lastTick, Math.min(now, s.lastTick + 5_000), running),
@@ -1412,9 +1431,15 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
           <Snowflake className="h-3.5 w-3.5" />Time Frozen — waiting for host uplink
         </span>
       )}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && (state === "direct_pool" || deviceState.connectedDirectly) && (
+        <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent">
+          <Home className="h-3.5 w-3.5" />
+          Connected directly via phone — your pass time is frozen
+        </span>
+      )}
       {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && direct && <span className="inline-flex items-center justify-center gap-2 text-sm text-primary"><Signal className="h-5 w-5 shrink-0" />Connected to GLOBAL NETWORKS (High-Speed Direct Relay)</span>}
-      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "pool" && !direct && !connecting && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}
-      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "personal" && <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent"><Home className="h-3.5 w-3.5" />On your own Wi-Fi — your pass time is saved</span>}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "pool" && !deviceState.connectedDirectly && !direct && !connecting && <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"><Zap className="h-3.5 w-3.5" />Connected automatically • {ssid}</span>}
+      {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "personal" && !deviceState.connectedDirectly && <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent"><Home className="h-3.5 w-3.5" />On your own Wi-Fi — your pass time is saved</span>}
       {!Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId()) && state === "searching" && deviceState.nearbyPoolDetected && (
         <span className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary animate-pulse">
           <Zap className="h-3.5 w-3.5" />Sensed {deviceState.nearbySsid || "Pool Network"} • Connecting automatically

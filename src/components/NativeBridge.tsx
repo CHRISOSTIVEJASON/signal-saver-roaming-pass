@@ -55,6 +55,7 @@ export function NativeBridge() {
           relay: state.relay ?? null,
           nearbyPoolDetected: Boolean(state.nearbyPoolDetected),
           nearbySsid: state.nearbySsid ?? undefined,
+          connectedDirectly: Boolean(state.connectedDirectly),
         });
 
         if (state.authFailedSsid) {
@@ -89,17 +90,25 @@ export function NativeBridge() {
     const check = () => {
       const device = read<Device>(KEYS.device, defaultDevice);
       const active = sessionRef.current.some((s) => s.remainingMs > 0 && !s.frozen);
-      const upstreamInPool =
-        connectionState(
-          device.currentWifi,
-          poolRef.current.map((n) => n.bssid),
-          device.personalSsids,
-          poolRef.current.map((n) => n.ssid)
-        ) === 'pool';
+      const isDirect = Boolean(device.connectedDirectly);
+      const state = connectionState(
+        device.currentWifi,
+        poolRef.current.map((n) => n.bssid),
+        device.personalSsids,
+        poolRef.current.map((n) => n.ssid),
+        isDirect
+      );
+      const upstreamInPool = state === 'pool';
+      const hasUpstreamWifi = Boolean(device.currentWifi?.ssid || device.currentWifi?.bssid);
 
-      if (active) {
-        void GlobalRelay.start({ active, upstreamInPool }).catch(() => {});
-        if (!upstreamInPool) {
+      // Relay is active whenever:
+      // 1) The user has an active pass (standard roaming relay)
+      // 2) OR the user is connected to Wi-Fi (direct Wi-Fi or pool Wi-Fi), even with an inactive pass, acting as an uplink relay host!
+      const shouldRelay = active || hasUpstreamWifi;
+
+      if (shouldRelay) {
+        void GlobalRelay.start({ active, upstreamInPool: upstreamInPool || isDirect }).catch(() => {});
+        if (active && !upstreamInPool && !isDirect) {
           if (device.currentWifi) {
             if (!isAutoRouterActive) {
               isAutoRouterActive = true;

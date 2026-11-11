@@ -35,6 +35,12 @@ describe("roaming + updates", () => {
   it("never drains on the user's own saved Wi-Fi", () => {
     expect(connectionState({ ssid: "Home", bssid: "11:22:33:44:55:66" }, pool, ["Home"])).toBe("personal");
   });
+  it("freezes timer when connected directly by user even if stamped in pool", () => {
+    expect(connectionState({ ssid: "Mall", bssid: "aa:bb:cc:dd:ee:ff" }, pool, [], ["Mall"], true)).toBe("direct_pool");
+  });
+  it("drains timer when connected automatically by app to stamped pool Wi-Fi", () => {
+    expect(connectionState({ ssid: "Mall", bssid: "aa:bb:cc:dd:ee:ff" }, pool, [], ["Mall"], false)).toBe("pool");
+  });
   it("freezes when not on pool Wi-Fi", () => {
     expect(connectionState(null, pool, [])).toBe("searching");
     expect(connectionState({ ssid: "Cafe", bssid: "11:22:33:44:55:77" }, pool, [])).toBe("searching");

@@ -73,7 +73,7 @@ function resolvePayHeroCallbackUrl(origin?: string): string {
   if (origin && typeof origin === 'string' && origin.startsWith('http')) {
     return origin.replace(/\/+$/, '') + '/api/public/payhero-callback';
   }
-  const envUrl = process.env.APP_URL || process.env.VITE_APP_URL || process.env.PUBLIC_URL;
+  const envUrl = process.env['APP_URL'] || process.env['VITE_APP_URL'] || process.env['PUBLIC_URL'];
   if (envUrl && typeof envUrl === 'string' && envUrl.startsWith('http')) {
     return envUrl.replace(/\/+$/, '') + '/api/public/payhero-callback';
   }
@@ -611,11 +611,12 @@ export const unpairCompanionPass = createServerFn({ method: 'POST' })
   });
 
 export const heartbeatSession = createServerFn({ method: 'POST' })
-  .validator((input: { id: string; bssid: string | null; relayReady?: boolean; deviceId?: string }) => z.object({
+  .validator((input: { id: string; bssid: string | null; relayReady?: boolean; deviceId?: string; directWifi?: boolean }) => z.object({
     id: z.string(),
     bssid: z.string().nullable(),
     relayReady: z.boolean().default(false),
-    deviceId: z.string().optional()
+    deviceId: z.string().optional(),
+    directWifi: z.boolean().optional()
   }).parse(input))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
@@ -645,7 +646,8 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     }
 
     const { data: pool } = await supabaseAdmin.from('gn_networks').select('bssid');
-    const hardwareOnline = Boolean(data.bssid && pool?.some((n) => n.bssid.toUpperCase() === data.bssid?.toUpperCase())) || Boolean(data.relayReady);
+    const isDirectWifi = Boolean(data.directWifi);
+    const hardwareOnline = !isDirectWifi && (Boolean(data.bssid && pool?.some((n) => n.bssid.toUpperCase() === data.bssid?.toUpperCase())) || Boolean(data.relayReady));
     const { data: svc } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
     let serviceActive = true;
     try { serviceActive = svc?.api_token ? JSON.parse(svc.api_token).active !== false : true; } catch {}

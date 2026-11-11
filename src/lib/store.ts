@@ -29,6 +29,7 @@ export type Device = {
   captive?: { bssid: string; ready: boolean; required: boolean } | null;
   nearbyPoolDetected?: boolean;
   nearbySsid?: string;
+  connectedDirectly?: boolean;
 };
 export const defaultDevice: Device = {
   appMode: false, onboarded: false,

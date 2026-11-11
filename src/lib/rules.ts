@@ -60,30 +60,35 @@ export function formatClock(ms?: number | null) {
 
 export const APP_VERSION = "1.2.4";
 
-export type WifiState = "pool" | "personal" | "searching";
+export type WifiState = "pool" | "personal" | "direct_pool" | "searching";
 /** Pool Wi-Fi drains the pass; the user's own saved Wi-Fi never does; anything else freezes it. */
 export function connectionState(
   current: { ssid?: string | null; bssid?: string | null } | null,
   poolBssids: string[],
   personalSsids: string[],
   poolSsids?: string[],
+  connectedDirectly?: boolean,
 ): WifiState {
   if (!current) return "searching";
   const currentBssid = current.bssid ? current.bssid.toUpperCase().trim() : "";
   const currentSsid = current.ssid ? current.ssid.toLowerCase().trim() : "";
 
-  // Match by hardware MAC (BSSID)
-  if (currentBssid && Array.isArray(poolBssids) && poolBssids.some((b) => b && b.toUpperCase().trim() === currentBssid)) {
-    return "pool";
-  }
-
-  // Match by network name (SSID) — allows multiple access points in the same school/hotspot sharing the same name to connect
-  if (currentSsid && Array.isArray(poolSsids) && poolSsids.some((s) => s && s.toLowerCase().trim() === currentSsid)) {
-    return "pool";
-  }
-
   // User's personal saved networks
   if (currentSsid && Array.isArray(personalSsids) && personalSsids.some((s) => s && s.toLowerCase().trim() === currentSsid)) {
+    return "personal";
+  }
+
+  const isPoolBssid = currentBssid && Array.isArray(poolBssids) && poolBssids.some((b) => b && b.toUpperCase().trim() === currentBssid);
+  const isPoolSsid = currentSsid && Array.isArray(poolSsids) && poolSsids.some((s) => s && s.toLowerCase().trim() === currentSsid);
+
+  if (isPoolBssid || isPoolSsid) {
+    if (connectedDirectly) {
+      return "direct_pool";
+    }
+    return "pool";
+  }
+
+  if (connectedDirectly) {
     return "personal";
   }
 

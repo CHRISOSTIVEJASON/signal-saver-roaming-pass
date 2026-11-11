@@ -298,6 +298,7 @@ public class GlobalRelayPlugin extends Plugin {
             if (watcher.getLastAuthFailedSsid() != null) {
                 result.put("authFailedSsid", watcher.getLastAuthFailedSsid());
             }
+            result.put("connectedDirectly", watcher.isConnectedDirectlyViaPhone());
         } catch (Throwable ignored) {}
 
         return result;

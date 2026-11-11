@@ -83,6 +83,21 @@ public class NetworkWatcher {
     private volatile long lastSuggestionTime = 0;
     private volatile long lastFallbackTrigger = 0;
     private volatile long lastScanRequestTime = 0;
+    private volatile boolean connectedViaAppSuggestion = false;
+    private volatile long lastSuggestionConnectedTime = 0;
+
+    public boolean isConnectedDirectlyViaPhone() {
+        String conn = getConnectedSsid();
+        if (conn == null || conn.isEmpty()) return false;
+        if (Build.VERSION.SDK_INT >= 29) {
+            return !connectedViaAppSuggestion;
+        } else {
+            if (lastSuggestedSsid != null && conn.equalsIgnoreCase(lastSuggestedSsid) && (System.currentTimeMillis() - lastSuggestionTime < 60000)) {
+                return false;
+            }
+            return true;
+        }
+    }
     private final java.util.Map<String, String> activeSuggestedSsids = new java.util.concurrent.ConcurrentHashMap<>();
     private static final long SCAN_THROTTLE_WINDOW_MS = 35_000L; // 35s throttle window
 
@@ -181,7 +196,11 @@ public class NetworkWatcher {
                     public void onReceive(Context context, Intent intent) {
                         if (intent != null) {
                             String action = intent.getAction();
-                            if (WifiManager.SUPPLICANT_STATE_CHANGED_ACTION.equals(action)) {
+                            if (Build.VERSION.SDK_INT >= 29 && WifiManager.ACTION_WIFI_NETWORK_SUGGESTION_POST_CONNECTION.equals(action)) {
+                                connectedViaAppSuggestion = true;
+                                lastSuggestionConnectedTime = System.currentTimeMillis();
+                                Log.i(TAG, "Connected via app Wi-Fi network suggestion broadcast");
+                            } else if (WifiManager.SUPPLICANT_STATE_CHANGED_ACTION.equals(action)) {
                                 int suppError = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1);
                                 if (suppError == WifiManager.ERROR_AUTHENTICATING) {
                                     handleAuthFailure();
@@ -193,6 +212,8 @@ public class NetworkWatcher {
                                     NetworkInfo.DetailedState detailed = netInfo.getDetailedState();
                                     if (detailed == NetworkInfo.DetailedState.FAILED || detailed == NetworkInfo.DetailedState.BLOCKED) {
                                         triggerCompanionRelayFallback("Wi-Fi connection " + detailed.name().toLowerCase(Locale.US));
+                                    } else if (detailed == NetworkInfo.DetailedState.DISCONNECTED) {
+                                        connectedViaAppSuggestion = false;
                                     }
                                 }
                             }
@@ -205,6 +226,9 @@ public class NetworkWatcher {
                 netFilter.addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION);
                 netFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
                 netFilter.addAction(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION);
+                if (Build.VERSION.SDK_INT >= 29) {
+                    netFilter.addAction(WifiManager.ACTION_WIFI_NETWORK_SUGGESTION_POST_CONNECTION);
+                }
                 context.registerReceiver(networkReceiver, netFilter);
             }
         } catch (Throwable t) {
@@ -388,6 +412,9 @@ public class NetworkWatcher {
             // 2. Check currently connected Wi-Fi
             String connSsid = getConnectedSsid();
             String connBssid = getConnectedBssid();
+            if (connSsid == null && connBssid == null) {
+                connectedViaAppSuggestion = false;
+            }
             if (connSsid != null || connBssid != null) {
                 boolean matchSsid = connSsid != null && poolSsids.contains(connSsid.toLowerCase(Locale.US));
                 boolean matchBssid = connBssid != null && poolBssids.contains(connBssid.toUpperCase(Locale.US));
