@@ -28,18 +28,17 @@ export const initiateStkPush = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     try {
+      const isChannel = Boolean(data.channelId && Number(data.channelId) > 0 && String(data.channelId).trim() !== "63902");
       const res = await fetch("https://backend.payhero.co.ke/api/v2/payments", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: authHeader(data) },
         body: JSON.stringify({
           amount: data.amount,
           phone_number: data.phone,
-          ...(data.channelId && Number(data.channelId) > 0 && String(data.channelId).trim() !== "63902"
-            ? { channel_id: Number(data.channelId) }
-            : { network_code: "63902" }),
-          provider: "m-pesa",
+          ...(isChannel ? { channel_id: Number(data.channelId) } : { network_code: "63902" }),
+          provider: isChannel ? "m-pesa" : "sasapay",
           external_reference: data.reference,
-          callback_url: "https://example.com/payhero-callback",
+          callback_url: "https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback",
         }),
       });
       const json = (await res.json().catch(() => ({}))) as any;

@@ -297,7 +297,7 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       const paymentBody: Record<string, unknown> = {
         amount: pass.amount,
         phone_number: phone,
-        provider: 'm-pesa',
+        provider: isChannelMode ? 'm-pesa' : 'sasapay',
         external_reference: ref,
         callback_url: resolvePayHeroCallbackUrl(data.origin)
       };
