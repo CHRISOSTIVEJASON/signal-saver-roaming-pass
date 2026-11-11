@@ -80,12 +80,27 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
     return { ok: true };
   });
 
-function resolvePayHeroCallbackUrl(origin?: string): string {
-  if (origin && typeof origin === 'string' && origin.startsWith('http')) {
+export function resolvePayHeroCallbackUrl(origin?: string): string {
+  const isLocalOrPreview = (url?: string | null): boolean => {
+    if (!url || typeof url !== 'string') return true;
+    const lower = url.toLowerCase().trim();
+    return (
+      lower.includes('localhost') ||
+      lower.includes('127.0.0.1') ||
+      lower.includes('capacitor://') ||
+      lower.includes('id-preview--') ||
+      lower.startsWith('http://192.168.') ||
+      lower.startsWith('http://10.') ||
+      lower.startsWith('http://172.') ||
+      !lower.startsWith('http')
+    );
+  };
+
+  if (origin && !isLocalOrPreview(origin)) {
     return origin.replace(/\/+$/, '') + '/api/public/payhero-callback';
   }
   const envUrl = process.env['APP_URL'] || process.env['VITE_APP_URL'] || process.env['PUBLIC_URL'];
-  if (envUrl && typeof envUrl === 'string' && envUrl.startsWith('http')) {
+  if (envUrl && !isLocalOrPreview(envUrl)) {
     return envUrl.replace(/\/+$/, '') + '/api/public/payhero-callback';
   }
   return 'https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback';
@@ -307,7 +322,15 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         const errorMsg = result?.error_message || result?.message || result?.error || `PayHero payment error (HTTP ${response.status})`;
         throw new Error(errorMsg);
       }
+      const checkoutRequestId = result?.CheckoutRequestID || result?.response?.CheckoutRequestID || result?.data?.CheckoutRequestID;
+      const merchantRequestId = result?.MerchantRequestID || result?.response?.MerchantRequestID || result?.data?.MerchantRequestID;
       (txn as any).externalRef = ref;
+      if (checkoutRequestId) {
+        (txn as any).checkoutRequestId = String(checkoutRequestId);
+      }
+      if (merchantRequestId) {
+        (txn as any).merchantRequestId = String(merchantRequestId);
+      }
       ref = String(returnedRef);
       txn.ref = ref;
     }

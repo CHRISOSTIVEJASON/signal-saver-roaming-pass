@@ -35,6 +35,20 @@ export async function payHeroStatus(db: Admin, ref: string): Promise<'paid' | 'f
 
 /** Create the session (idempotent) and mark the transaction Activated. */
 export async function activateTxn(db: Admin, txn: Txn, userId: string, deviceId?: string): Promise<Session> {
+  // If transaction is already Activated, return its active session (or stacked session) without re-calculating or re-stacking
+  if (txn.status === 'Activated') {
+    const { data: direct } = await db.from('gn_sessions').select('payload').eq('id', txn.id).maybeSingle();
+    if (direct?.payload) return direct.payload as unknown as Session;
+
+    const normPhone = normalizePhone(txn.phone || '');
+    const { data: activeSessions } = await db.from('gn_sessions').select('*').order('updated_at', { ascending: false }).limit(20);
+    const existingActive = (activeSessions || []).find((r: any) => {
+      const p = r.payload as any;
+      return p && normalizePhone(p.phone || '') === normPhone && (p.remainingMs || 0) > 0;
+    });
+    if (existingActive?.payload) return existingActive.payload as unknown as Session;
+  }
+
   const { data: existing } = await db.from('gn_sessions').select('payload').eq('id', txn.id).maybeSingle();
   if (existing) {
     if (txn.status !== 'Activated') await db.from('gn_transactions').update({ payload: j({ ...txn, status: 'Activated' }) }).eq('id', txn.id);

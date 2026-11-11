@@ -9,10 +9,11 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
         const raw = await request.json().catch(() => null);
         if (!raw || typeof raw !== 'object') return new Response('bad request', { status: 400 });
 
-        const r = (raw.response && typeof raw.response === 'object' ? raw.response : raw) as any;
-        const externalRef = String(r.ExternalReference ?? r.external_reference ?? raw.external_reference ?? '').trim();
-        const checkoutId = String(r.CheckoutRequestID ?? r.checkout_request_id ?? raw.CheckoutRequestID ?? '').trim();
-        const ref = String(r.Reference ?? r.reference ?? r.MpesaReceiptNumber ?? r.mpesa_reference ?? raw.Reference ?? raw.reference ?? '').trim();
+        const r = (raw.response && typeof raw.response === 'object' ? raw.response : (raw.data && typeof raw.data === 'object' ? raw.data : raw)) as any;
+        const externalRef = String(r.ExternalReference ?? r.external_reference ?? raw.external_reference ?? raw.ExternalReference ?? '').trim();
+        const checkoutId = String(r.CheckoutRequestID ?? r.checkout_request_id ?? raw.CheckoutRequestID ?? raw.checkout_request_id ?? '').trim();
+        const ref = String(r.Reference ?? r.reference ?? r.MpesaReceiptNumber ?? r.mpesa_reference ?? raw.Reference ?? raw.reference ?? raw.MpesaReceiptNumber ?? '').trim();
+        const merchantId = String(r.MerchantRequestID ?? r.merchant_request_id ?? raw.MerchantRequestID ?? raw.merchant_request_id ?? '').trim();
         const billRef = String(r.BillRefNumber ?? r.billrefnumber ?? r.bill_ref_number ?? r.AccountNumber ?? r.account_number ?? r.accountNumber ?? r.Account ?? r.account ?? raw.BillRefNumber ?? raw.account_number ?? '').trim();
 
         let ticketPart = '';
@@ -20,59 +21,77 @@ export const Route = createFileRoute('/api/public/payhero-callback')({
           ticketPart = billRef.split('#')[1]?.trim() || '';
         }
 
-        const refs = [externalRef, checkoutId, ref, billRef, ticketPart].filter(Boolean);
+        const refs = [externalRef, checkoutId, ref, merchantId, billRef, ticketPart].filter(Boolean);
+        const rawPhone = String(r.Phone ?? r.phone ?? r.PhoneNumber ?? r.phone_number ?? r.MSISDN ?? raw.phone ?? raw.PhoneNumber ?? '');
+        const phone = normalizePhone(rawPhone);
+        const amount = Number(r.Amount ?? r.amount ?? raw.amount ?? 0);
         const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
         const { confirmTxn, activateTxn, loadOffers } = await import('@/lib/payments.server');
 
         // 1. If matching an existing pending transaction
-        if (refs.length > 0) {
-          const { data: rows } = await supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(300);
-          const row = (rows || []).find((t) => {
-            const p = t.payload as any;
-            if (!p) return false;
-            return (
-              refs.includes(p.ref) ||
-              refs.includes(p.externalRef) ||
-              refs.includes(p.id) ||
-              refs.includes(p.checkoutRequestId) ||
-              (p.accountNumber && refs.some((rStr: string) => rStr && (p.accountNumber.toUpperCase().includes(rStr.toUpperCase()) || rStr.toUpperCase().includes(p.accountNumber.toUpperCase()))))
-            );
-          });
-          const cbStatus = String(r.Status ?? r.status ?? raw.status ?? '').toUpperCase();
-          const cbResultCode = r?.ResultCode ?? r?.result_code ?? raw?.ResultCode ?? raw?.result_code;
-          const cbResponseCode = r?.ResponseCode ?? r?.response_code ?? raw?.ResponseCode ?? raw?.response_code;
-          const isVerifiedSuccess =
-            ['SUCCESS', 'SUCCESSFUL', 'COMPLETED', 'COMPLETE', 'PAID', 'CONFIRMED'].includes(cbStatus) ||
-            cbResultCode === 0 ||
-            cbResultCode === '0' ||
-            cbResponseCode === 0 ||
-            cbResponseCode === '0' ||
-            r?.paymentSuccess === true ||
-            r?.is_paid === true ||
-            raw?.success === true;
+        const { data: rows } = await supabaseAdmin.from('gn_transactions').select('*').order('created_at', { ascending: false }).limit(300);
+        let row = (rows || []).find((t) => {
+          const p = t.payload as any;
+          if (!p) return false;
+          return (
+            refs.includes(p.ref) ||
+            refs.includes(p.externalRef) ||
+            refs.includes(p.id) ||
+            refs.includes(p.checkoutRequestId) ||
+            refs.includes(p.merchantRequestId) ||
+            (p.accountNumber && refs.some((rStr: string) => rStr && (p.accountNumber.toUpperCase().includes(rStr.toUpperCase()) || rStr.toUpperCase().includes(p.accountNumber.toUpperCase()))))
+          );
+        });
 
-          if (row) {
-            try {
-              const p = row.payload as any;
-              if (isVerifiedSuccess) {
-                // Immediate activation on verified success to eliminate PayHero timing race condition
-                await activateTxn(supabaseAdmin, p, row.user_id, p?.deviceId);
-              } else {
-                await confirmTxn(supabaseAdmin, row, p?.deviceId);
-              }
-              return new Response('ok');
-            } catch (e) {
-              console.warn('payhero callback existing txn confirmation error:', e);
+        // Fallback match: if exact ref not matched, but same phone attempted STK push in last 10 minutes
+        if (!row && phone) {
+          const tenMinutesAgo = Date.now() - 10 * 60_000;
+          row = (rows || []).find((t) => {
+            const p = t.payload as any;
+            return p && p.status === 'Pending' && normalizePhone(p.phone || '') === phone && (p.at || 0) >= tenMinutesAgo;
+          });
+        }
+
+        const cbStatus = String(r.Status ?? r.status ?? raw.status ?? '').toUpperCase();
+        const cbResultCode = r?.ResultCode ?? r?.result_code ?? raw?.ResultCode ?? raw?.result_code;
+        const cbResponseCode = r?.ResponseCode ?? r?.response_code ?? raw?.ResponseCode ?? raw?.response_code;
+        const isVerifiedSuccess =
+          ['SUCCESS', 'SUCCESSFUL', 'COMPLETED', 'COMPLETE', 'PAID', 'CONFIRMED'].includes(cbStatus) ||
+          cbResultCode === 0 ||
+          cbResultCode === '0' ||
+          cbResponseCode === 0 ||
+          cbResponseCode === '0' ||
+          r?.paymentSuccess === true ||
+          r?.is_paid === true ||
+          raw?.success === true;
+
+        const isFailed =
+          ['FAILED', 'CANCELLED', 'CANCELED', 'REJECTED', 'DECLINED'].includes(cbStatus) ||
+          [1, 1031, 1032, 1037].includes(Number(cbResultCode)) ||
+          raw?.success === false;
+
+        if (row) {
+          try {
+            const p = row.payload as any;
+            if (isVerifiedSuccess) {
+              if (amount > 0 && !p.amount) p.amount = amount;
+              // Immediate activation on verified success to eliminate PayHero timing race condition
+              await activateTxn(supabaseAdmin, p, row.user_id, p?.deviceId);
+            } else if (isFailed) {
+              await supabaseAdmin.from('gn_transactions').update({
+                payload: { ...p, status: 'Failed', failedAt: Date.now(), failureReason: r?.ResultDesc || cbStatus || 'Payment was cancelled or failed' }
+              }).eq('id', row.id);
+            } else {
+              await confirmTxn(supabaseAdmin, row, p?.deviceId);
             }
+            return new Response('ok');
+          } catch (e) {
+            console.warn('payhero callback existing txn confirmation error:', e);
           }
         }
 
         // 2. Direct Paybill / C2B notification (e.g. to Paybill 756756, Account 553125#13205)
-        const rawPhone = String(r.Phone ?? r.phone ?? r.PhoneNumber ?? r.phone_number ?? r.MSISDN ?? raw.phone ?? '');
-        const phone = normalizePhone(rawPhone);
-        const amount = Number(r.Amount ?? r.amount ?? raw.amount ?? 0);
         const status = String(r.Status ?? r.status ?? raw.status ?? '').toUpperCase();
-        const isFailed = ['FAILED', 'CANCELLED', 'CANCELED', 'REJECTED'].includes(status);
 
         if (phone && amount > 0 && !isFailed) {
           const offers = await loadOffers(supabaseAdmin);

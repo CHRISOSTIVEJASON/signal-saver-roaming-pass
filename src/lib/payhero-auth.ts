@@ -1,5 +1,13 @@
 export function getPayHeroAuthHeader(credentials: { api_token?: string; username?: string; password?: string }) {
+  const u = (credentials.username || '').trim();
+  const p = (credentials.password || '').trim();
   const token = (credentials.api_token || '').trim();
+
+  // If username and password are provided without a separate token, use HTTP Basic auth with username:password
+  if (u && p && !token) {
+    return `Basic ${btoa(`${u}:${p}`)}`;
+  }
+
   if (token) {
     if (token.toLowerCase().startsWith('basic ')) return token;
     if (token.toLowerCase().startsWith('bearer ')) return token;
@@ -15,7 +23,9 @@ export function getPayHeroAuthHeader(credentials: { api_token?: string; username
     if (token.includes(':')) return `Basic ${btoa(token)}`;
     return `Basic ${btoa(`${token}:`)}`;
   }
-  const u = (credentials.username || '').trim();
-  const p = (credentials.password || '').trim();
-  return `Basic ${btoa(`${u}:${p}`)}`;
+
+  if (u && p) {
+    return `Basic ${btoa(`${u}:${p}`)}`;
+  }
+  return '';
 }
