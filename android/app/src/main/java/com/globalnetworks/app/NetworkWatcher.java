@@ -187,7 +187,11 @@ public class NetworkWatcher {
                     }
                 };
                 IntentFilter scanFilter = new IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION);
-                context.registerReceiver(scanReceiver, scanFilter);
+                if (Build.VERSION.SDK_INT >= 33) {
+                    context.registerReceiver(scanReceiver, scanFilter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    context.registerReceiver(scanReceiver, scanFilter);
+                }
             }
 
             if (networkReceiver == null) {
@@ -229,7 +233,11 @@ public class NetworkWatcher {
                 if (Build.VERSION.SDK_INT >= 29) {
                     netFilter.addAction(WifiManager.ACTION_WIFI_NETWORK_SUGGESTION_POST_CONNECTION);
                 }
-                context.registerReceiver(networkReceiver, netFilter);
+                if (Build.VERSION.SDK_INT >= 33) {
+                    context.registerReceiver(networkReceiver, netFilter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    context.registerReceiver(networkReceiver, netFilter);
+                }
             }
         } catch (Throwable t) {
             Log.w(TAG, "Error registering receivers: " + t.getMessage());
@@ -571,9 +579,13 @@ public class NetworkWatcher {
                         .setSsid(ssid)
                         .setIsAppInteractionRequired(false);
 
-                // Passphrase length guard: Android requires WPA2 passphrase to be 8-63 characters
-                if (trimmedPass != null && trimmedPass.length() >= 8 && trimmedPass.length() <= 63) {
-                    builder.setWpa2Passphrase(trimmedPass);
+                // Passphrase support: attempt to set passphrase for any length, catching platform bounds safely
+                if (trimmedPass != null && !trimmedPass.isEmpty()) {
+                    try {
+                        builder.setWpa2Passphrase(trimmedPass);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Standard WPA2 passphrase set failed on platform: " + t.getMessage());
+                    }
                 }
 
                 WifiNetworkSuggestion suggestion = builder.build();
@@ -590,7 +602,7 @@ public class NetworkWatcher {
             }
         }
 
-        if (Build.VERSION.SDK_INT < 29 && wifiManager != null && trimmedPass != null && trimmedPass.length() >= 8 && trimmedPass.length() <= 63) {
+        if (Build.VERSION.SDK_INT < 29 && wifiManager != null && trimmedPass != null && !trimmedPass.isEmpty()) {
             try {
                 android.net.wifi.WifiConfiguration conf = new android.net.wifi.WifiConfiguration();
                 conf.SSID = "\"" + ssid + "\"";

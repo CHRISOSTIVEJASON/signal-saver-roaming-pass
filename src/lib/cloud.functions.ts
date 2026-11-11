@@ -34,13 +34,19 @@ export const getAdminPaymentConfig = createServerFn({ method: 'POST' })
 
 import { getPayHeroAuthHeader } from './payhero-auth';
 export const savePaymentConfig = createServerFn({ method: 'POST' })
-  .validator((data: PayConfig) => data)
+  .validator((data: PayConfig & { securityCode?: string }) => data)
   .handler(async ({ data }) => {
     if (data.apkUrl && !/^https:\/\//.test(data.apkUrl)) throw new Error('Use an HTTPS APK download link');
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
 
     const { data: existingCreds } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
     const hasCredUpdates = Boolean(data.apiToken || data.username || data.password || data.channelId !== undefined);
+
+    if (hasCredUpdates && existingCreds) {
+      if (data.securityCode?.trim() !== '2006') {
+        throw new Error('Invalid security code. Master authorization required to update payment settings.');
+      }
+    }
 
     if (hasCredUpdates || !existingCreds) {
       const channelToSave = (data.channelId === '63902' || !data.channelId) ? '' : String(data.channelId).trim();

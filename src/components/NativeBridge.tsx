@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import { useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { GlobalRelay, type NativeState } from '@/lib/native-relay';
@@ -65,6 +66,7 @@ export function NativeBridge() {
           );
           if (matchedNet) {
             recordNetworkAlert(matchedNet.ssid, matchedNet.bssid, matchedNet.venue);
+            toast.error(`Router rejected password for "${failedSsid}". Update the WPA key in admin dashboard.`, { id: 'auth_failed_' + failedSsid, duration: 6000 });
           }
           void GlobalRelay.clearAuthFailed().catch(() => {});
         }

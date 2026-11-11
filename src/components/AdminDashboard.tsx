@@ -1209,7 +1209,7 @@ function PayHeroCard() {
         channelId: settlementMode === "network" ? "" : (c.channelId === "63902" ? "" : c.channelId.trim()),
       };
       setSaved(configToSave);
-      await saveCloudConfig({ data: configToSave });
+      await saveCloudConfig({ data: { ...configToSave, securityCode: passcode.trim() } });
       toast.success(c.live ? "Live FinoQ STK Push saved & activated!" : "Demo mode saved");
       setAuthOpen(false);
       setPasscode("");
