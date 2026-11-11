@@ -337,19 +337,40 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         paymentBody['account_id'] = 13205;
       }
 
-      const response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
+      let response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', Authorization: authorization },
         body: JSON.stringify(paymentBody)
       });
-      const result = (await response.json().catch(() => ({}))) as any;
-      const returnedRef = result?.reference || result?.CheckoutRequestID || result?.response?.CheckoutRequestID || result?.data?.reference || result?.external_reference || ref;
-      const hasError = !response.ok || result?.success === false || result?.status === 'FAILED' || Boolean(result?.error) || Boolean(result?.error_message);
+      let result = (await response.json().catch(() => ({}))) as any;
+      let hasError = !response.ok || result?.success === false || result?.status === 'FAILED' || Boolean(result?.error) || Boolean(result?.error_message);
+
+      // If sasapay provider failed (e.g. database operation error when account wallet is unlinked), retry with m-pesa provider
+      if (hasError && paymentBody['provider'] === 'sasapay') {
+        console.warn('PayHero sasapay request failed, attempting fallback to m-pesa provider:', result);
+        const fallbackBody = { ...paymentBody, provider: 'm-pesa' };
+        const retryRes = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', Authorization: authorization },
+          body: JSON.stringify(fallbackBody)
+        });
+        const retryJson = (await retryRes.json().catch(() => ({}))) as any;
+        const retryFailed = !retryRes.ok || retryJson?.success === false || retryJson?.status === 'FAILED' || Boolean(retryJson?.error) || Boolean(retryJson?.error_message);
+        if (!retryFailed) {
+          response = retryRes;
+          result = retryJson;
+          hasError = false;
+        }
+      }
 
       if (hasError) {
-        const errorMsg = result?.error_message || result?.message || result?.error || `PayHero payment error (HTTP ${response.status})`;
+        const rawErr = String(result?.error_message || result?.message || result?.error || `HTTP ${response.status}`);
+        const errorMsg = rawErr.toLowerCase().includes('database operation')
+          ? `PayHero rejected wallet collection (${rawErr}). Please switch to Channel ID mode in Admin Console > Payment Settings and enter your PayHero Channel ID.`
+          : `PayHero error: ${rawErr}`;
         throw new Error(errorMsg);
       }
+      const returnedRef = result?.reference || result?.CheckoutRequestID || result?.response?.CheckoutRequestID || result?.data?.reference || result?.external_reference || ref;
       const checkoutRequestId = result?.CheckoutRequestID || result?.response?.CheckoutRequestID || result?.data?.CheckoutRequestID;
       const merchantRequestId = result?.MerchantRequestID || result?.response?.MerchantRequestID || result?.data?.MerchantRequestID;
       (txn as any).externalRef = ref;
