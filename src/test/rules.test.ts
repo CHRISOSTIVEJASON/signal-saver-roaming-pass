@@ -1,3 +1,4 @@
+import { defaultDevice } from "../lib/store";
 import { describe, it, expect } from "vitest";
 import { changePasscode, getPass, normalizePhone, tick, DEFAULT_PASSES } from "@/lib/rules";
 
@@ -228,5 +229,26 @@ describe("M-Pesa receipt verification & payment aggregation rules", () => {
     const combined30 = calculateProportionalDuration(18, DEFAULT_PASSES);
     expect(combined30.isUnderpaid).toBe(false);
     expect(combined30.hours).toBe(30);
+  });
+});
+
+describe("mandatory permissions first-launch acceptance gate", () => {
+  it("initializes with all permissions unset and onboarded false", () => {
+    expect(defaultDevice.onboarded).toBe(false);
+    expect(defaultDevice.perms.wifi).toBe("unset");
+    expect(defaultDevice.perms.background).toBe("unset");
+    expect(defaultDevice.perms.autostart).toBe("unset");
+    expect(defaultDevice.perms.relay).toBe("unset");
+  });
+
+  it("requires all 4 permissions to be granted before unlocking", () => {
+    const checkAll = (p: typeof defaultDevice.perms) => Object.values(p).every((v) => v === "granted");
+    expect(checkAll(defaultDevice.perms)).toBe(false);
+
+    const partial = { ...defaultDevice.perms, wifi: "granted" as const, background: "granted" as const };
+    expect(checkAll(partial)).toBe(false);
+
+    const full = { wifi: "granted" as const, background: "granted" as const, autostart: "granted" as const, relay: "granted" as const };
+    expect(checkAll(full)).toBe(true);
   });
 });

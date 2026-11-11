@@ -5,6 +5,7 @@ import android.util.Log;
 import android.Manifest;
 import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.ConnectivityManager;
@@ -209,6 +210,40 @@ public class GlobalRelayPlugin extends Plugin {
         } catch (Exception e) {
             try {
                 Intent fallback = new Intent(Settings.ACTION_WIRELESS_SETTINGS);
+                fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(fallback);
+            } catch (Exception ignored) {}
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openAutostartSettings(PluginCall call) {
+        String buildManufacturer = Build.MANUFACTURER != null ? Build.MANUFACTURER.toLowerCase() : "";
+        Intent intent = new Intent();
+        boolean started = false;
+        try {
+            if (buildManufacturer.contains("xiaomi") || buildManufacturer.contains("redmi")) {
+                intent.setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"));
+            } else if (buildManufacturer.contains("oppo")) {
+                intent.setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"));
+            } else if (buildManufacturer.contains("vivo")) {
+                intent.setComponent(new ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"));
+            } else if (buildManufacturer.contains("huawei") || buildManufacturer.contains("honor")) {
+                intent.setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"));
+            } else if (buildManufacturer.contains("transsion") || buildManufacturer.contains("tecno") || buildManufacturer.contains("infinix")) {
+                intent.setComponent(new ComponentName("com.transsion.phonemanager", "com.transsion.phonemanager.settings.AutoStartManageActivity"));
+            }
+            if (intent.getComponent() != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(intent);
+                started = true;
+            }
+        } catch (Exception ignored) {}
+
+        if (!started) {
+            try {
+                Intent fallback = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getContext().getPackageName()));
                 fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 getContext().startActivity(fallback);
             } catch (Exception ignored) {}

@@ -14,9 +14,10 @@ export const useConfig = () => {
 };
 
 const PERMS: { key: keyof Device["perms"]; title: string; why: string; icon: ReactNode }[] = [
-  { key: "background", title: "Continuous Background & Auto-Start", why: "Allows relay and Wi-Fi sensing to run continuously without sleeping, even when locked or rebooted.", icon: <BatteryCharging className="h-5 w-5" /> },
-  { key: "wifi", title: "Find Nearby Wi-Fi & Hotspots", why: "Mandatory location and nearby devices permission to scan and stamp network signals.", icon: <Wifi className="h-5 w-5" /> },
-  { key: "relay", title: "Status Notification & Relay", why: "Required for foreground network service to maintain local connection sharing.", icon: <Share2 className="h-5 w-5" /> },
+  { key: "wifi", title: "Location & Nearby Wi-Fi Devices", why: "Mandatory location and nearby devices permission to scan, detect, and automatically connect to stamped pool Wi-Fi signals.", icon: <Wifi className="h-5 w-5" /> },
+  { key: "background", title: "Unrestricted Battery & Background Running", why: "Prevents Android from putting the network watcher to sleep when the screen is locked.", icon: <BatteryCharging className="h-5 w-5" /> },
+  { key: "autostart", title: "Auto-Start & Boot Persistence", why: "Ensures the network watcher and background roaming service automatically resume when your phone reboots.", icon: <RefreshCw className="h-5 w-5" /> },
+  { key: "relay", title: "Status Notification & Foreground Service", why: "Required for the persistent foreground service to keep network sharing and alerts active.", icon: <Share2 className="h-5 w-5" /> },
 ];
 
 function openApk(url: string) {
@@ -42,7 +43,7 @@ export function DownloadGate() {
       ...prev,
       appMode: true,
       onboarded: true,
-      perms: { background: "granted", wifi: "granted", relay: "granted" },
+      perms: { background: "granted", wifi: "granted", relay: "granted", autostart: "granted" },
     }));
   };
 
@@ -229,36 +230,152 @@ export function UpdateGate() {
 
 export function Onboarding() {
   const [device, setDevice] = useDevice();
-  const [i, setI] = useState(0);
-  const p = PERMS[i] ?? PERMS[0];
-  if (!p) return null;
-  const answer = async (v: Perm) => {
-    if (Capacitor.isNativePlatform() && v === "granted") {
-      const result = await GlobalRelay.requestAccess();
-      try {
-        await GlobalRelay.requestBatteryExemption();
-      } catch (_) {}
-      v = result.granted ? "granted" : "denied";
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+
+  const allApproved = PERMS.every((p) => device.perms[p.key] === "granted");
+
+  const grant = async (key: keyof Device["perms"]) => {
+    setLoadingKey(key as string);
+    try {
+      if (Capacitor.isNativePlatform()) {
+        if (key === "wifi" || key === "relay") {
+          const res = await GlobalRelay.requestAccess();
+          if (res.granted) {
+            setDevice((prev) => ({ ...prev, perms: { ...prev.perms, [key]: "granted" } }));
+            toast.success("Permission granted!");
+          } else {
+            toast.error("Please allow the permission in the prompt to continue.");
+          }
+        } else if (key === "background") {
+          await GlobalRelay.requestBatteryExemption();
+          setDevice((prev) => ({ ...prev, perms: { ...prev.perms, background: "granted" } }));
+          toast.success("Battery optimization set to Unrestricted!");
+        } else if (key === "autostart") {
+          if (typeof GlobalRelay.openAutostartSettings === "function") {
+            await GlobalRelay.openAutostartSettings();
+          } else {
+            await GlobalRelay.openSettings();
+          }
+          setDevice((prev) => ({ ...prev, perms: { ...prev.perms, autostart: "granted" } }));
+          toast.success("Auto-start permission accepted!");
+        }
+      } else {
+        setDevice((prev) => ({ ...prev, perms: { ...prev.perms, [key]: "granted" } }));
+        toast.success("Permission accepted!");
+      }
+    } catch (_) {
+      setDevice((prev) => ({ ...prev, perms: { ...prev.perms, [key]: "granted" } }));
+    } finally {
+      setLoadingKey(null);
     }
-    const perms = { ...device.perms, [p.key]: v };
-    const done = i === PERMS.length - 1;
-    setDevice({ ...device, perms, onboarded: done || device.onboarded });
-    if (!done) setI(i + 1);
   };
+
+  const grantAll = async () => {
+    setLoadingKey("all");
+    try {
+      if (Capacitor.isNativePlatform()) {
+        await GlobalRelay.requestAccess();
+        await GlobalRelay.requestBatteryExemption();
+        if (typeof GlobalRelay.openAutostartSettings === "function") {
+          try { await GlobalRelay.openAutostartSettings(); } catch (_) {}
+        }
+      }
+      setDevice((prev) => ({
+        ...prev,
+        perms: { wifi: "granted", background: "granted", autostart: "granted", relay: "granted" },
+      }));
+      toast.success("All mandatory permissions accepted!");
+    } catch (_) {
+      setDevice((prev) => ({
+        ...prev,
+        perms: { wifi: "granted", background: "granted", autostart: "granted", relay: "granted" },
+      }));
+    } finally {
+      setLoadingKey(null);
+    }
+  };
+
+  const handleFinish = () => {
+    if (!allApproved) {
+      toast.error("All permissions must be accepted to use Global Networks.");
+      return;
+    }
+    setDevice((prev) => ({ ...prev, onboarded: true }));
+    toast.success("Setup completed! Welcome to Global Networks.");
+  };
+
   return (
-    <div className="space-y-5">
-      <div className="text-center">
-        <h2 className="text-lg font-bold">Welcome! A few quick steps</h2>
-        <p className="text-sm text-muted-foreground">Step {i + 1} of {PERMS.length}</p>
+    <div className="space-y-5 text-left">
+      <div className="text-center space-y-1">
+        <h2 className="text-xl font-bold">Mandatory Setup & Permissions</h2>
+        <p className="text-xs text-muted-foreground">
+          To automatically sense pool Wi-Fi, run in the background, and keep roaming active, all permissions below must be accepted.
+        </p>
       </div>
-      <div className="space-y-3 rounded-xl border border-border bg-secondary/30 p-5 text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/15 text-primary">{p.icon}</div>
-        <div className="font-semibold">{p.title}</div>
-        <p className="text-sm text-muted-foreground">{p.why}</p>
+
+      <div className="space-y-2.5">
+        {PERMS.map((p) => {
+          const isGranted = device.perms[p.key] === "granted";
+          const isLoading = loadingKey === p.key;
+
+          return (
+            <div
+              key={p.key}
+              className={`flex items-start justify-between gap-3 rounded-xl border p-3.5 transition-colors ${
+                isGranted ? "border-primary/40 bg-primary/5" : "border-border bg-secondary/20"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                  isGranted ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                }`}>
+                  {p.icon}
+                </div>
+                <div className="space-y-0.5 text-left">
+                  <div className="text-xs font-semibold flex items-center gap-1.5">
+                    {p.title}
+                    {isGranted && <span className="text-[10px] font-bold text-primary">✓ Accepted</span>}
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">{p.why}</p>
+                </div>
+              </div>
+
+              <Button
+                size="sm"
+                variant={isGranted ? "outline" : "default"}
+                onClick={() => grant(p.key)}
+                disabled={isLoading || isGranted}
+                className={`h-8 shrink-0 rounded-lg px-2.5 text-xs font-semibold ${
+                  isGranted
+                    ? "border-primary/40 text-primary bg-transparent"
+                    : "bg-primary text-primary-foreground hover:brightness-110"
+                }`}
+              >
+                {isLoading ? "Setting…" : isGranted ? "Granted" : "Grant"}
+              </Button>
+            </div>
+          );
+        })}
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Button onClick={() => answer("denied")} className="h-12 rounded-xl border border-border text-sm font-medium">Don't allow</Button>
-        <Button onClick={() => answer("granted")} className="h-12 rounded-xl bg-primary text-sm font-semibold text-primary-foreground">Allow</Button>
+
+      <div className="space-y-2 pt-2">
+        {!allApproved && (
+          <Button
+            onClick={grantAll}
+            disabled={loadingKey === "all"}
+            className="h-11 w-full rounded-xl bg-secondary text-xs font-semibold hover:bg-secondary/80"
+          >
+            {loadingKey === "all" ? "Accepting Permissions…" : "Accept All Permissions"}
+          </Button>
+        )}
+
+        <Button
+          onClick={handleFinish}
+          disabled={!allApproved}
+          className="h-12 w-full rounded-xl bg-primary text-sm font-bold text-primary-foreground shadow-[0_0_24px_-6px_var(--primary)] hover:brightness-110 disabled:opacity-50"
+        >
+          {allApproved ? "Continue to Global Networks →" : "Accept All Permissions to Continue"}
+        </Button>
       </div>
     </div>
   );
@@ -289,15 +406,18 @@ export function PermissionBlock() {
             try {
               const res = await GlobalRelay.requestAccess();
               await GlobalRelay.requestBatteryExemption();
+              if (typeof GlobalRelay.openAutostartSettings === "function") {
+                try { await GlobalRelay.openAutostartSettings(); } catch (_) {}
+              }
               if (res.granted) {
-                setDevice({ ...device, perms: { background: "granted", wifi: "granted", relay: "granted" } });
+                setDevice({ ...device, perms: { background: "granted", wifi: "granted", relay: "granted", autostart: "granted" } });
                 toast.success("Mandatory permissions enabled!");
                 return;
               }
             } catch (_) {}
             void GlobalRelay.openSettings();
           } else {
-            setDevice({ ...device, perms: { background: "granted", wifi: "granted", relay: "granted" } });
+            setDevice({ ...device, perms: { background: "granted", wifi: "granted", relay: "granted", autostart: "granted" } });
             toast.success("Permissions enabled");
           }
         }} className="flex h-11 items-center justify-center gap-1.5 rounded-xl bg-primary text-sm font-semibold text-primary-foreground">

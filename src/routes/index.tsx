@@ -41,7 +41,7 @@ function Index() {
         ...prev,
         appMode: true,
         onboarded: isLaptopOrDesktop ? true : prev.onboarded,
-        perms: isLaptopOrDesktop ? { background: "granted", wifi: "granted", relay: "granted" } : prev.perms,
+        perms: isLaptopOrDesktop ? { background: "granted", wifi: "granted", relay: "granted", autostart: "granted" } : prev.perms,
       }));
     }
   }, [isNative, isLaptopOrDesktop, device.appMode, device.onboarded, setDevice]);

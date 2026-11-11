@@ -22,7 +22,7 @@ export type WifiInfo = { ssid: string; bssid: string };
 export type Device = {
   appMode: boolean;
   onboarded: boolean;
-  perms: { background: Perm; wifi: Perm; relay: Perm };
+  perms: { background: Perm; wifi: Perm; relay: Perm; autostart: Perm };
   currentWifi: WifiInfo | null;
   personalSsids: string[];
   relay?: MeshLink | null;
@@ -33,7 +33,7 @@ export type Device = {
 };
 export const defaultDevice: Device = {
   appMode: false, onboarded: false,
-  perms: { background: "unset", wifi: "unset", relay: "unset" },
+  perms: { background: "unset", wifi: "unset", relay: "unset", autostart: "unset" },
   currentWifi: null, personalSsids: ["My Home Wi-Fi"],
 };
 export type Network = { id: string; ssid: string; bssid: string; venue: string; addedAt: number; password?: string | undefined };
