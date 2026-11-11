@@ -17,7 +17,19 @@ export async function loadOffers(db: Admin): Promise<PassOffer[]> {
 
 /** Ask PayHero whether a reference is paid. Never trust an unsigned callback body. */
 export async function payHeroStatus(db: Admin, ref: string): Promise<'paid' | 'failed' | 'pending'> {
-  const { data: c } = await db.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
+  let c: any = null;
+  try {
+    const { data } = await db.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
+    c = data;
+  } catch {}
+  if (!c) {
+    const apiToken = (process.env.PAYHERO_API_TOKEN || process.env.VITE_PAYHERO_API_TOKEN || '').trim();
+    const username = (process.env.PAYHERO_USERNAME || '').trim();
+    const password = (process.env.PAYHERO_PASSWORD || '').trim();
+    if (apiToken || (username && password)) {
+      c = { api_token: apiToken, username, password };
+    }
+  }
   if (!c) return 'pending';
   const headers = { Authorization: getPayHeroAuthHeader(c), Accept: 'application/json' };
   let res = await fetch(`https://backend.payhero.co.ke/api/v2/transaction-status?reference=${encodeURIComponent(ref)}`, { headers });

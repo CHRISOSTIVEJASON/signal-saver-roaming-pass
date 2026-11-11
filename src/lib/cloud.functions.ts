@@ -61,7 +61,7 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
         username: data.username !== undefined && data.username !== '' ? data.username : (existingCreds?.username || ''),
         password: data.password !== undefined && data.password !== '' ? data.password : (existingCreds?.password || ''),
         channel_id: data.channelId !== undefined ? channelToSave : (existingCreds?.channel_id || '')
-      });
+      }, { onConflict: 'id' });
       if (error) {
         console.error('Unable to save payment credentials:', error);
         throw new Error('Unable to save payment credentials: ' + error.message);
@@ -75,7 +75,7 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
       latest_version: data.latestVersion !== undefined && data.latestVersion !== '' ? data.latestVersion : (existingSettings?.latest_version || '1.0.0'),
       update_required: data.updateRequired !== undefined ? Boolean(data.updateRequired) : Boolean(existingSettings?.update_required),
       live: typeof data.live === "boolean" ? data.live : (existingSettings?.live ?? false)
-    });
+    }, { onConflict: 'id' });
     if (settingsError) throw new Error('Unable to save settings');
     return { ok: true };
   });
@@ -163,10 +163,18 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
     });
 
     // Check if phone number already has an active, running pass to prevent joining twice!
-    const { data: existingSessions } = await supabaseAdmin
-      .from('gn_sessions')
-      .select('*')
-      .order('updated_at', { ascending: false });
+    let existingSessions: any[] = [];
+    try {
+      const { data: sessData, error: sessErr } = await supabaseAdmin
+        .from('gn_sessions')
+        .select('*')
+        .order('updated_at', { ascending: false });
+      if (!sessErr && Array.isArray(sessData)) {
+        existingSessions = sessData;
+      }
+    } catch (e) {
+      console.warn('Unable to query gn_sessions:', e);
+    }
 
     const existingActive = (existingSessions || []).find((r) => {
       const p = r.payload as any;
@@ -278,19 +286,38 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       return { id, live: false, ref: exemptRef, exempted: true, session, amount: 0 };
     }
 
-    const { data: settings } = await supabaseAdmin.from('gn_settings').select('live').eq('id', 'global').maybeSingle();
+    let live = false;
+    try {
+      const { data: settings } = await supabaseAdmin.from('gn_settings').select('live').eq('id', 'global').maybeSingle();
+      live = settings?.live ?? false;
+    } catch (e) {
+      console.warn('Unable to query gn_settings:', e);
+    }
+
     let ref = 'GN' + id.replaceAll('-', '').slice(0, 12).toUpperCase();
-    const live = settings?.live ?? false;
     const txn: Txn = { id, ref, phone, amount: pass.amount, passId: pass.id, at: Date.now(), status: 'Pending', mode: live ? 'Live' : 'Demo' };
     (txn as any).deviceId = data.deviceId || userId;
 
     if (live) {
-      const { data: credentials } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
-      if (!(credentials?.api_token || (credentials?.username && credentials?.password))) {
+      let credentials: any = null;
+      try {
+        const { data: creds, error: credsErr } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
+        if (!credsErr && creds) credentials = creds;
+      } catch (e) {
+        console.warn('Unable to query gn_payment_credentials:', e);
+      }
+
+      const apiToken = (credentials?.api_token || process.env.PAYHERO_API_TOKEN || process.env.VITE_PAYHERO_API_TOKEN || '').trim();
+      const username = (credentials?.username || process.env.PAYHERO_USERNAME || '').trim();
+      const password = (credentials?.password || process.env.PAYHERO_PASSWORD || '').trim();
+      const rawChannel = String(credentials?.channel_id || process.env.PAYHERO_CHANNEL_ID || '').trim();
+
+      const credsObj = { api_token: apiToken, username, password, channel_id: rawChannel };
+      if (!apiToken && !(username && password)) {
         throw new Error('Merchant has not configured live payment credentials in Admin Console. Set API Key or Token.');
       }
-      const authorization = getPayHeroAuthHeader(credentials);
-      const rawChannel = String(credentials?.channel_id || '').trim();
+
+      const authorization = getPayHeroAuthHeader(credsObj);
       const channelNum = Number(rawChannel);
       const isChannelMode = Boolean(rawChannel) && !isNaN(channelNum) && channelNum > 0 && rawChannel !== '63902';
 
@@ -305,8 +332,9 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       if (isChannelMode) {
         paymentBody['channel_id'] = channelNum;
       } else {
-        // FinoQ / PayHero Wallet collection: credit directly into account wallet
+        // FinoQ / PayHero Wallet collection: credit directly into account wallet (network_code 63902 + account_id 13205)
         paymentBody['network_code'] = '63902';
+        paymentBody['account_id'] = 13205;
       }
 
       const response = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
@@ -335,18 +363,22 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
       txn.ref = ref;
     }
 
-    const { error: txnErr } = await supabaseAdmin.from('gn_transactions').insert({
-      id,
-      user_id: userId,
-      payload: JSON.parse(JSON.stringify(txn))
-    });
-    if (txnErr) {
-      console.warn('Initial gn_transactions insert failed, retrying with id:', txnErr);
-      await supabaseAdmin.from('gn_transactions').insert({
+    try {
+      const { error: txnErr } = await supabaseAdmin.from('gn_transactions').insert({
         id,
-        user_id: id,
+        user_id: userId,
         payload: JSON.parse(JSON.stringify(txn))
       });
+      if (txnErr) {
+        console.warn('Initial gn_transactions insert failed, retrying with id:', txnErr);
+        await supabaseAdmin.from('gn_transactions').insert({
+          id,
+          user_id: id,
+          payload: JSON.parse(JSON.stringify(txn))
+        });
+      }
+    } catch (txnErr) {
+      console.warn('Unable to record pending transaction to gn_transactions:', txnErr);
     }
 
     return { id, live, ref };
@@ -1468,6 +1500,7 @@ export const generateDynamicPaybillTicket = createServerFn({ method: 'POST' })
         phone_number: phone,
         provider: 'sasapay',
         network_code: '63902',
+        account_id: 13205,
         is_offline: true,
         external_reference: externalRef,
         callback_url: resolvePayHeroCallbackUrl(data.origin),
@@ -1514,11 +1547,15 @@ export const generateDynamicPaybillTicket = createServerFn({ method: 'POST' })
       (txn as any).deviceId = data.deviceId;
     }
 
-    await supabaseAdmin.from('gn_transactions').insert({
-      id,
-      user_id: id,
-      payload: JSON.parse(JSON.stringify(txn))
-    });
+    try {
+      await supabaseAdmin.from('gn_transactions').insert({
+        id,
+        user_id: id,
+        payload: JSON.parse(JSON.stringify(txn))
+      });
+    } catch (e) {
+      console.warn('Unable to record dynamic ticket transaction to gn_transactions:', e);
+    }
 
     return {
       paybill: '756756',

@@ -35,7 +35,7 @@ export const initiateStkPush = createServerFn({ method: "POST" })
         body: JSON.stringify({
           amount: data.amount,
           phone_number: data.phone,
-          ...(isChannel ? { channel_id: Number(data.channelId) } : { network_code: "63902" }),
+          ...(isChannel ? { channel_id: Number(data.channelId) } : { network_code: "63902", account_id: 13205 }),
           provider: isChannel ? "m-pesa" : "sasapay",
           external_reference: data.reference,
           callback_url: "https://signal-saver-roaming-pass.lovable.app/api/public/payhero-callback",
