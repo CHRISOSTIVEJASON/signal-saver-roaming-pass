@@ -1441,8 +1441,17 @@ function AppSettingsCard() {
     const next = { ...saved, apkUrl: c.apkUrl.trim(), latestVersion: c.latestVersion.trim(), updateRequired: c.updateRequired };
     try {
       setSaved(next);
-      // Preserve live mode: never overwrite live status from general app settings
-      await saveCloudSettings({ data: { ...next, live: undefined } });
+      // Preserve live mode and never submit payment credentials from general app settings
+      await saveCloudSettings({
+        data: {
+          ...next,
+          live: undefined,
+          apiToken: undefined,
+          username: undefined,
+          password: undefined,
+          channelId: undefined,
+        } as any
+      });
       toast.success("App settings saved and synced to all devices");
     } catch (err) {
       console.warn("Failed cloud settings save:", err);
@@ -1522,6 +1531,11 @@ function PoolManager() {
     const rawSsid = (cur?.ssid || manualSsid).trim();
     if (!rawSsid) {
       toast.error("Enter network SSID or connect phone to Wi-Fi to stamp");
+      return;
+    }
+    const cleanPassword = manualPassword.trim();
+    if (!isCaptive && cleanPassword && cleanPassword.length < 8) {
+      toast.error("Wi-Fi WPA2 password must be at least 8 characters long");
       return;
     }
     const rawBssid = (cur?.bssid || manualBssid.trim() || ("GN:" + Math.abs(rawSsid.split("").reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)).toString(16).toUpperCase())).trim().toUpperCase();

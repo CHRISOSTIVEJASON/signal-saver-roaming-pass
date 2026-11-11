@@ -475,12 +475,8 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     const msisdn = normalizePhone(phone);
     if (!msisdn) { toast.error("Enter a valid Safaricom number (07… or 01…)"); return; }
 
-    if (existingSession && existingSession.remainingMs > 0) {
-      toast.error(`You already have an active pass with ${formatClock(existingSession.remainingMs)} remaining. Cannot join twice while active.`);
-      return;
-    }
-
-    setBusy("Sending M-Pesa prompt to your phone…");
+    const isStacking = Boolean(existingSession && existingSession.remainingMs > 0);
+    setBusy(isStacking ? "Sending M-Pesa prompt to extend pass time…" : "Sending M-Pesa prompt to your phone…");
     const deviceId = getDeviceId();
     let currentTxnId = uid();
     try {
@@ -558,7 +554,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
         }
         updateTxn(r.id, { status: "Activated" });
         onActivated(activatedSession);
-        toast.success("Payment confirmed! High-speed pass activated.");
+        toast.success(isStacking ? "Payment confirmed! Pass extended and time stacked." : "Payment confirmed! High-speed pass activated.");
       } else {
         setBusy("Activating Demo pass (Test mode)…");
         await new Promise((res) => setTimeout(res, 800));
@@ -1331,11 +1327,12 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     let mounted = true;
     const syncStatus = async () => {
       try {
-        const isDirect = state === "direct_pool" || Boolean(deviceState.connectedDirectly);
+        const isDirect = state === "personal" || Boolean(deviceState.connectedDirectly);
         const res = await heartbeat({
           data: {
             id: session.id,
             bssid: deviceState.currentWifi?.bssid ?? null,
+            ssid: deviceState.currentWifi?.ssid ?? null,
             relayReady: direct,
             deviceId: getDeviceId(),
             directWifi: isDirect

@@ -88,12 +88,31 @@ export const contributeNetworkAndCaptive = createServerFn({ method: 'POST' })
   });
 
 export const getPaidCaptive = createServerFn({ method: 'POST' })
-  .validator((input: { sessionId: string; bssid: string }) => z.object({ sessionId: z.string().min(1).max(100), bssid: z.string().regex(/^(?:[a-fA-F0-9]{2}:){5}[a-fA-F0-9]{2}$/) }).parse(input))
+  .validator((input: { sessionId: string; bssid?: string | null; ssid?: string | null }) => z.object({
+    sessionId: z.string().min(1).max(100),
+    bssid: z.string().nullable().optional(),
+    ssid: z.string().nullable().optional(),
+  }).parse(input))
   .handler(async ({ data }) => {
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
     const { data: sessionRow } = await supabaseAdmin.from('gn_sessions').select('payload').eq('id', data.sessionId).maybeSingle();
-    const { data: network } = await supabaseAdmin.from('gn_networks').select('id,bssid').ilike('bssid', data.bssid).maybeSingle();
-    if (!sessionRow || !network) throw new Error('Active pass and registered network required');
+    if (!sessionRow) throw new Error('Active pass required');
+
+    let network: { id: string; bssid: string } | null = null;
+    const cleanBssid = data.bssid?.trim().toUpperCase();
+    const cleanSsid = data.ssid?.trim();
+
+    if (cleanBssid && cleanBssid !== '02:00:00:00:00:00') {
+      const { data: netByBssid } = await supabaseAdmin.from('gn_networks').select('id,bssid').ilike('bssid', cleanBssid).maybeSingle();
+      if (netByBssid) network = netByBssid;
+    }
+
+    if (!network && cleanSsid) {
+      const { data: netsBySsid } = await supabaseAdmin.from('gn_networks').select('id,bssid').ilike('ssid', cleanSsid).limit(1);
+      if (netsBySsid && netsBySsid.length > 0) network = netsBySsid[0] ?? null;
+    }
+
+    if (!network) throw new Error('Active pass and registered network required');
     const { data: row, error } = await supabaseAdmin.from('gn_captive_credentials').select('config,updated_at').eq('network_id', network.id).maybeSingle();
     if (error) throw new Error('Network login unavailable');
     if (!row) return { required: false as const, config: null, revision: '' };

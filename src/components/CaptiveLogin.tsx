@@ -38,7 +38,7 @@ export function CaptiveLogin({ sessionId }: { sessionId: string }) {
       if (busy || Date.now() < retryAt) return;
       busy = true;
       try {
-        const login = await getLogin({ data: { sessionId, bssid: bssid || '' } });
+        const login = await getLogin({ data: { sessionId, bssid: bssid || null, ssid: ssid || null } });
         if (disposed) return;
         if (!login.required || !login.config) {
           update(true, false);

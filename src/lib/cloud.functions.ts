@@ -40,7 +40,12 @@ export const savePaymentConfig = createServerFn({ method: 'POST' })
     const { supabaseAdmin } = await import('@/integrations/supabase/client.server');
 
     const { data: existingCreds } = await supabaseAdmin.from('gn_payment_credentials').select('*').eq('id', 'global').maybeSingle();
-    const hasCredUpdates = Boolean(data.apiToken || data.username || data.password || data.channelId !== undefined);
+    const hasCredUpdates = Boolean(
+      (data.apiToken !== undefined && data.apiToken !== '') ||
+      (data.username !== undefined && data.username !== '') ||
+      (data.password !== undefined && data.password !== '') ||
+      (data.channelId !== undefined && data.channelId !== '')
+    );
 
     if (hasCredUpdates && existingCreds) {
       if (data.securityCode?.trim() !== '2006') {
@@ -169,31 +174,34 @@ export const startCloudPayment = createServerFn({ method: 'POST' })
         }).eq('id', existingActive.id);
       }
 
-      const existingSession: Session = {
-        id: payload.id,
-        phone: payload.phone,
-        passId: payload.passId,
-        totalMs: payload.totalMs,
-        remainingMs: Math.max(0, payload.remainingMs),
-        lastTick: Date.now(),
-        online: true,
-        startedAt: payload.startedAt,
-        companionPin: payload.companion_pin || getCompanionPin(null, payload.phone),
-        pairedCompanionId: payload.paired_companion_id || null,
-        boundDeviceId: payload.bound_device_id || null,
-        frozen: Boolean(payload.frozen),
-        frozenAt: payload.frozenAt,
-      };
+      if (isExempt) {
+        const existingSession: Session = {
+          id: payload.id,
+          phone: payload.phone,
+          passId: payload.passId,
+          totalMs: payload.totalMs,
+          remainingMs: Math.max(0, payload.remainingMs),
+          lastTick: Date.now(),
+          online: true,
+          startedAt: payload.startedAt,
+          companionPin: payload.companion_pin || getCompanionPin(null, payload.phone),
+          pairedCompanionId: payload.paired_companion_id || null,
+          boundDeviceId: payload.bound_device_id || null,
+          frozen: Boolean(payload.frozen),
+          frozenAt: payload.frozenAt,
+        };
 
-      return {
-        id: payload.id,
-        live: false,
-        ref: isExempt ? 'EXEMPT-ACTIVE' : (payload.ref || 'RESTORE-ACTIVE'),
-        exempted: isExempt,
-        session: existingSession,
-        amount: 0,
-        alreadyActive: true,
-      };
+        return {
+          id: payload.id,
+          live: false,
+          ref: 'EXEMPT-ACTIVE',
+          exempted: true,
+          session: existingSession,
+          amount: 0,
+          alreadyActive: true,
+        };
+      }
+      // For paid passes: proceed with payment flow so user can stack/extend time!
     }
 
     const id = crypto.randomUUID();
@@ -617,9 +625,10 @@ export const unpairCompanionPass = createServerFn({ method: 'POST' })
   });
 
 export const heartbeatSession = createServerFn({ method: 'POST' })
-  .validator((input: { id: string; bssid: string | null; relayReady?: boolean; deviceId?: string; directWifi?: boolean }) => z.object({
+  .validator((input: { id: string; bssid: string | null; ssid?: string | null; relayReady?: boolean; deviceId?: string; directWifi?: boolean }) => z.object({
     id: z.string(),
     bssid: z.string().nullable(),
+    ssid: z.string().nullable().optional(),
     relayReady: z.boolean().default(false),
     deviceId: z.string().optional(),
     directWifi: z.boolean().optional()
@@ -651,9 +660,12 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
       }
     }
 
-    const { data: pool } = await supabaseAdmin.from('gn_networks').select('bssid');
+    const { data: pool } = await supabaseAdmin.from('gn_networks').select('ssid, bssid');
     const isDirectWifi = Boolean(data.directWifi);
-    const hardwareOnline = !isDirectWifi && (Boolean(data.bssid && pool?.some((n) => n.bssid.toUpperCase() === data.bssid?.toUpperCase())) || Boolean(data.relayReady));
+    const matchesPoolBssid = Boolean(data.bssid && pool?.some((n) => n.bssid && n.bssid.toUpperCase() === data.bssid?.toUpperCase()));
+    const matchesPoolSsid = Boolean(data.ssid && pool?.some((n) => n.ssid && n.ssid.trim().toLowerCase() === data.ssid?.trim().toLowerCase()));
+    const matchesPool = matchesPoolBssid || matchesPoolSsid;
+    const hardwareOnline = !isDirectWifi && (matchesPool || Boolean(data.relayReady));
     const { data: svc } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
     let serviceActive = true;
     try { serviceActive = svc?.api_token ? JSON.parse(svc.api_token).active !== false : true; } catch {}

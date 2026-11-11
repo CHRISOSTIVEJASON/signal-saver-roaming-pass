@@ -581,10 +581,15 @@ public class NetworkWatcher {
 
                 // Passphrase support: attempt to set passphrase for any length, catching platform bounds safely
                 if (trimmedPass != null && !trimmedPass.isEmpty()) {
+                    if (trimmedPass.length() < 8) {
+                        Log.w(TAG, "WPA2 passphrase for " + ssid + " is under 8 characters; skipping suggestion to prevent open-auth association rejection.");
+                        return;
+                    }
                     try {
                         builder.setWpa2Passphrase(trimmedPass);
                     } catch (Throwable t) {
                         Log.w(TAG, "Standard WPA2 passphrase set failed on platform: " + t.getMessage());
+                        return;
                     }
                 }
 
