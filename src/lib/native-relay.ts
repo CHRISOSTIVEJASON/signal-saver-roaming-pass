@@ -31,7 +31,7 @@ export const GlobalRelay = registerPlugin<{
   stop(): Promise<void>;
   syncWatcherConfig(options: { poolSsids: string[]; poolBssids: string[]; hasActivePass: boolean; soundAlerts?: boolean; poolPasswords?: Record<string, string> }): Promise<{ success: boolean }>;
   triggerCompanionFallback(): Promise<{ success: boolean }>;
-  startClientAutoRouter(options?: { hostIp?: string; hostPort?: number }): Promise<{ active: boolean; hostIp: string; hostPort: number }>;
+  startClientAutoRouter(options?: { hostIp?: string; hostPort?: number }): Promise<{ active: boolean; permissionRequired: boolean; hostIp: string; hostPort: number }>;
   stopClientAutoRouter(): Promise<void>;
   playBeepTone(): Promise<{ success: boolean }>;
   saveDevicePhone(options: { phone: string }): Promise<{ success: boolean }>;

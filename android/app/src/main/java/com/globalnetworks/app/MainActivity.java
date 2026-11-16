@@ -1,11 +1,7 @@
 package com.globalnetworks.app;
 
-import android.Manifest;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.net.VpnService;
-import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -16,13 +12,8 @@ import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebViewClient;
 
-import java.util.ArrayList;
-import java.util.List;
 
 public class MainActivity extends BridgeActivity {
-    private static final int PERM_REQUEST_CODE = 100;
-    private static final int VPN_REQUEST_CODE = 101;
-
     @Override
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(GlobalRelayPlugin.class);
@@ -50,37 +41,18 @@ public class MainActivity extends BridgeActivity {
             getBridge().setWebViewClient(new AppBridgeWebViewClient(getBridge()));
         }
 
-        checkAndRequestMandatoryPermissions();
     }
 
-    private void checkAndRequestMandatoryPermissions() {
-        if (Build.VERSION.SDK_INT >= 23) {
-            List<String> needed = new ArrayList<>();
-            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                needed.add(Manifest.permission.ACCESS_FINE_LOCATION);
-            }
-            if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                needed.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-            }
-            if (Build.VERSION.SDK_INT >= 33) {
-                if (checkSelfPermission("android.permission.NEARBY_WIFI_DEVICES") != PackageManager.PERMISSION_GRANTED) {
-                    needed.add("android.permission.NEARBY_WIFI_DEVICES");
-                }
-                if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                    needed.add(Manifest.permission.POST_NOTIFICATIONS);
-                }
-            }
-            if (!needed.isEmpty()) {
-                requestPermissions(needed.toArray(new String[0]), PERM_REQUEST_CODE);
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == GlobalRelayPlugin.VPN_REQUEST_CODE) {
+            GlobalRelayPlugin plugin = GlobalRelayPlugin.getInstance();
+            if (plugin != null) {
+                plugin.onVpnPermissionResult(resultCode == RESULT_OK);
             }
         }
-
-        try {
-            Intent vpnIntent = VpnService.prepare(this);
-            if (vpnIntent != null) {
-                startActivityForResult(vpnIntent, VPN_REQUEST_CODE);
-            }
-        } catch (Exception ignored) {}
     }
 
     private static class AppBridgeWebViewClient extends BridgeWebViewClient {

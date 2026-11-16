@@ -61,6 +61,7 @@ import java.io.InputStream;
     @Permission(alias="notifications", strings={Manifest.permission.POST_NOTIFICATIONS})
 })
 public class GlobalRelayPlugin extends Plugin {
+    public static final int VPN_REQUEST_CODE = 101;
     private static volatile GlobalRelayPlugin activeInstance;
 
     public static GlobalRelayPlugin getInstance() {
@@ -76,6 +77,11 @@ public class GlobalRelayPlugin extends Plugin {
     private ConnectivityManager.NetworkCallback defaultNetworkCallback;
     private boolean started = false;
     private boolean upstream = false;
+    private boolean vpnPermissionRequestInFlight = false;
+    private boolean vpnPermissionDenied = false;
+    private String pendingVpnHostIp;
+    private int pendingVpnHostPort = RelayService.RELAY_PORT;
+    private volatile boolean discoveredUpstream = false;
     private JSObject relay;
     private final String networkName = "DIRECT-GLOBAL-NETWORKS";
     private final ExecutorService portalExecutor = Executors.newSingleThreadExecutor();
@@ -147,6 +153,7 @@ public class GlobalRelayPlugin extends Plugin {
         try {
             Intent serviceIntent = new Intent(getContext(), RelayService.class);
             serviceIntent.setAction(RelayService.ACTION_START_HOST);
+            serviceIntent.putExtra(RelayService.EXTRA_BIND_ADDRESS, "127.0.0.1");
             if (Build.VERSION.SDK_INT >= 26) {
                 getContext().startForegroundService(serviceIntent);
             } else {
@@ -185,21 +192,51 @@ public class GlobalRelayPlugin extends Plugin {
 
     @PluginMethod
     public void checkMandatoryPermission(PluginCall call) {
-        JSObject result = new JSObject();
         boolean hasAccess = granted();
-        Intent vpnIntent = VpnService.prepare(getContext());
-        boolean vpnPrepared = (vpnIntent == null);
-
+        boolean vpnPrepared = VpnService.prepare(getContext()) == null;
+        JSObject result = new JSObject();
         result.put("granted", hasAccess);
         result.put("vpnPrepared", vpnPrepared);
         result.put("ready", hasAccess && vpnPrepared);
-
-        if (!vpnPrepared && getActivity() != null) {
-            try {
-                getActivity().startActivityForResult(vpnIntent, 101);
-            } catch (Exception ignored) {}
-        }
+        if (!vpnPrepared && !vpnPermissionDenied) requestVpnPermission();
         call.resolve(result);
+    }
+
+    private void requestVpnPermission() {
+        if (vpnPermissionRequestInFlight || vpnPermissionDenied || getActivity() == null) return;
+        Intent intent = VpnService.prepare(getContext());
+        if (intent == null) {
+            resumePendingVpn();
+            return;
+        }
+        vpnPermissionRequestInFlight = true;
+        try {
+            getActivity().startActivityForResult(intent, VPN_REQUEST_CODE);
+        } catch (Exception e) {
+            vpnPermissionRequestInFlight = false;
+            Log.w("GlobalRelayPlugin", "Could not request Android VPN approval", e);
+        }
+    }
+
+    public void onVpnPermissionResult(boolean approved) {
+        vpnPermissionRequestInFlight = false;
+        vpnPermissionDenied = !approved;
+        if (approved) resumePendingVpn();
+        emit();
+    }
+
+    private void resumePendingVpn() {
+        if (pendingVpnHostIp == null || VpnService.prepare(getContext()) != null) return;
+        startClientVpnService(pendingVpnHostIp, pendingVpnHostPort);
+    }
+
+    private void startClientVpnService(String hostIp, int port) {
+        Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
+        vpnIntent.setAction(RelayVpnService.ACTION_START_CLIENT);
+        vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_IP, hostIp);
+        vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_PORT, port);
+        if (Build.VERSION.SDK_INT >= 26) getContext().startForegroundService(vpnIntent);
+        else getContext().startService(vpnIntent);
     }
 
     @PluginMethod
@@ -410,8 +447,6 @@ public class GlobalRelayPlugin extends Plugin {
         }
         started = true;
 
-        autoStartRelayHost();
-
         Map<String, String> record = new HashMap<>();
         record.put("identity", networkName);
         record.put("uplink", String.valueOf(upstream));
@@ -422,7 +457,12 @@ public class GlobalRelayPlugin extends Plugin {
                 config.deviceAddress = device.deviceAddress;
                 manager.connect(channel, config, action());
             }
-        }, (domain, txt, device) -> {});
+        }, (domain, txt, device) -> {
+            if (txt != null && "GLOBAL-NETWORKS".equals(txt.get("identity"))) {
+                discoveredUpstream = Boolean.parseBoolean(txt.get("uplink"));
+                refreshGroup();
+            }
+        });
         manager.addServiceRequest(channel, android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest.newInstance(), action());
         manager.discoverServices(channel, action());
         if (upstream) manager.createGroup(channel, action());
@@ -433,39 +473,22 @@ public class GlobalRelayPlugin extends Plugin {
     @PluginMethod
     public void startClientAutoRouter(PluginCall call) {
         String host = call.getString("hostIp");
-        if (host == null || host.isEmpty() || "192.168.49.1".equals(host)) {
-            try {
-                WifiManager wm = (WifiManager) getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-                if (wm != null) {
-                    android.net.DhcpInfo dhcp = wm.getDhcpInfo();
-                    if (dhcp != null && dhcp.gateway != 0) {
-                        String detectedGw = android.text.format.Formatter.formatIpAddress(dhcp.gateway);
-                        if (detectedGw != null && !detectedGw.equals("0.0.0.0")) {
-                            host = detectedGw;
-                        }
-                    }
-                }
-            } catch (Throwable ignored) {}
+        if (host == null || host.trim().isEmpty()) {
+            call.reject("A connected relay host address is required");
+            return;
         }
-        if (host == null || host.isEmpty()) {
-            host = "192.168.49.1";
-        }
-        int port = call.getInt("hostPort", 8282);
+        int port = call.getInt("hostPort", RelayService.RELAY_PORT);
+        pendingVpnHostIp = host.trim();
+        pendingVpnHostPort = port;
 
-        Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
-        vpnIntent.setAction(RelayVpnService.ACTION_START_CLIENT);
-        vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_IP, host);
-        vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_PORT, port);
-
-        if (Build.VERSION.SDK_INT >= 26) {
-            getContext().startForegroundService(vpnIntent);
-        } else {
-            getContext().startService(vpnIntent);
-        }
+        boolean vpnPrepared = VpnService.prepare(getContext()) == null;
+        if (vpnPrepared) startClientVpnService(pendingVpnHostIp, pendingVpnHostPort);
+        else requestVpnPermission();
 
         JSObject res = new JSObject();
-        res.put("active", true);
-        res.put("hostIp", host);
+        res.put("active", vpnPrepared);
+        res.put("permissionRequired", !vpnPrepared);
+        res.put("hostIp", pendingVpnHostIp);
         res.put("hostPort", port);
         call.resolve(res);
     }
@@ -564,11 +587,15 @@ public class GlobalRelayPlugin extends Plugin {
             }
             manager.requestGroupInfo(channel, (group) -> {
                 relay = new JSObject();
+                relay.put("id", info.groupOwnerAddress != null ? info.groupOwnerAddress.getHostAddress() : "wifi-direct-relay");
                 relay.put("connected", true);
                 relay.put("isGroupOwner", info.isGroupOwner);
                 String ownerIp = info.groupOwnerAddress != null ? info.groupOwnerAddress.getHostAddress() : "";
                 relay.put("groupOwnerAddress", ownerIp);
-                relay.put("transportReady", RelayService.isRouterRunning() || info.groupFormed);
+                relay.put("upstreamInPool", info.isGroupOwner ? upstream : discoveredUpstream);
+                relay.put("transportReady", info.isGroupOwner
+                        ? RelayService.isRouterRunning()
+                        : RelayVpnService.isVpnRunning());
                 relay.put("transportType", "wifi_direct_bridge");
                 relay.put("peerCount", group != null ? group.getClientList().size() : 0);
                 relay.put("txBytes", RelayService.getSentBytes());
@@ -579,7 +606,9 @@ public class GlobalRelayPlugin extends Plugin {
                     relay.put("passphrase", group.getPassphrase());
                 }
 
-                if (!info.isGroupOwner && ownerIp != null && !ownerIp.isEmpty()) {
+                if (info.isGroupOwner && ownerIp != null && !ownerIp.isEmpty()) {
+                    startRelayHostOnAddress(ownerIp);
+                } else if (ownerIp != null && !ownerIp.isEmpty()) {
                     autoEngageClientRouter(ownerIp, RelayService.RELAY_PORT);
                 }
 
@@ -588,24 +617,26 @@ public class GlobalRelayPlugin extends Plugin {
         });
     }
 
+    private void startRelayHostOnAddress(String address) {
+        Intent serviceIntent = new Intent(getContext(), RelayService.class);
+        serviceIntent.setAction(RelayService.ACTION_START_HOST);
+        serviceIntent.putExtra(RelayService.EXTRA_BIND_ADDRESS, address);
+        if (Build.VERSION.SDK_INT >= 26) getContext().startForegroundService(serviceIntent);
+        else getContext().startService(serviceIntent);
+    }
+
     private void autoEngageClientRouter(String hostIp, int port) {
         try {
-            Intent vpnPrepare = VpnService.prepare(getContext());
-            if (vpnPrepare != null && getActivity() != null) {
-                getActivity().startActivityForResult(vpnPrepare, 101);
+            pendingVpnHostIp = hostIp;
+            pendingVpnHostPort = port;
+            if (VpnService.prepare(getContext()) == null) {
+                startClientVpnService(hostIp, port);
+            } else {
+                requestVpnPermission();
             }
-            if (!RelayVpnService.isVpnRunning() && VpnService.prepare(getContext()) == null) {
-                Intent vpnIntent = new Intent(getContext(), RelayVpnService.class);
-                vpnIntent.setAction(RelayVpnService.ACTION_START_CLIENT);
-                vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_IP, hostIp);
-                vpnIntent.putExtra(RelayVpnService.EXTRA_HOST_PORT, port);
-                if (Build.VERSION.SDK_INT >= 26) {
-                    getContext().startForegroundService(vpnIntent);
-                } else {
-                    getContext().startService(vpnIntent);
-                }
-            }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            Log.w("GlobalRelayPlugin", "Could not start the client relay tunnel", e);
+        }
     }
 
     @PluginMethod

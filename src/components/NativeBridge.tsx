@@ -35,9 +35,14 @@ export function NativeBridge() {
     let disposed = false;
     let lastMeshSync = 0;
 
-    // Trigger mandatory runtime & VPN permissions right on launch
-    void GlobalRelay.requestAccess().catch(() => {});
-    void GlobalRelay.checkMandatoryPermission().catch(() => {});
+    // Request nearby/location access first, then show Android's one-time VPN
+    // approval screen in sequence so the two system dialogs never race.
+    void GlobalRelay.requestAccess()
+      .then(({ granted }) => {
+        if (granted && !disposed) return GlobalRelay.checkMandatoryPermission();
+        return undefined;
+      })
+      .catch(() => {});
 
     const update = (state: NativeState) => {
       if (disposed) return;
@@ -88,8 +93,6 @@ export function NativeBridge() {
       void GlobalRelay.syncWatcherConfig(getWatcherConfig(sessionRef.current, poolRef.current)).catch(() => {});
     };
 
-    let isAutoRouterActive = false;
-
     const check = () => {
       const device = read<Device>(KEYS.device, defaultDevice);
       const active = sessionRef.current.some((s) => s.remainingMs > 0 && !s.frozen);
@@ -111,29 +114,10 @@ export function NativeBridge() {
 
       if (shouldRelay) {
         void GlobalRelay.start({ active, upstreamInPool: upstreamInPool || isDirect }).catch(() => {});
-        if (active && !upstreamInPool && !isDirect) {
-          if (device.currentWifi) {
-            if (!isAutoRouterActive) {
-              isAutoRouterActive = true;
-              void GlobalRelay.startClientAutoRouter().catch(() => {});
-            }
-          } else {
-            if (isAutoRouterActive) {
-              isAutoRouterActive = false;
-              void GlobalRelay.stopClientAutoRouter().catch(() => {});
-            }
-            void GlobalRelay.triggerCompanionFallback().catch(() => {});
-          }
-        } else {
-          if (isAutoRouterActive) {
-            isAutoRouterActive = false;
-            void GlobalRelay.stopClientAutoRouter().catch(() => {});
-          }
+        if (active && !upstreamInPool && !isDirect && !hasUpstreamWifi) {
+          void GlobalRelay.triggerCompanionFallback().catch(() => {});
         }
       } else {
-        if (isAutoRouterActive) {
-          isAutoRouterActive = false;
-        }
         void GlobalRelay.stop().catch(() => {});
         void GlobalRelay.stopClientAutoRouter().catch(() => {});
       }

@@ -27,6 +27,8 @@ public class RelayVpnService extends VpnService {
     private ParcelFileDescriptor vpnInterface;
     private String hostIp = "192.168.49.1";
     private int hostPort = 8282;
+    private String configuredHostIp;
+    private int configuredHostPort = -1;
 
     public static boolean isVpnRunning() {
         return isRunning.get();
@@ -67,7 +69,10 @@ public class RelayVpnService extends VpnService {
             } catch (Throwable ignored) {}
         }
 
-        startForegroundNotification("Global Networks Dual-Path Tunnel", "Native TUN engine (lwIP/tun2socks) active to " + hostIp + ":" + hostPort);
+        if (isRunning.get() && (!hostIp.equals(configuredHostIp) || hostPort != configuredHostPort)) {
+            stopVpn();
+        }
+        startForegroundNotification("Global Networks Dual-Path Tunnel", "Relay tunnel to " + hostIp + ":" + hostPort);
         startVpnTunnel();
         return START_STICKY;
     }
@@ -99,7 +104,8 @@ public class RelayVpnService extends VpnService {
     }
 
     private synchronized void startVpnTunnel() {
-        if (isRunning.get()) return;
+        if (isRunning.get() && hostIp.equals(configuredHostIp) && hostPort == configuredHostPort) return;
+        if (isRunning.get()) stopVpn();
 
         // Native engine availability check
         if (!TProxyService.isLoaded()) {
@@ -159,6 +165,8 @@ public class RelayVpnService extends VpnService {
             Log.i(TAG, "Starting native tun2socks engine with fd=" + vpnInterface.getFd());
             if (TProxyService.isLoaded()) {
                 TProxyService.TProxyStartService(configFile.getAbsolutePath(), vpnInterface.getFd());
+                configuredHostIp = hostIp;
+                configuredHostPort = hostPort;
                 isRunning.set(true);
             } else {
                 Log.w(TAG, "Native tun2socks engine not loaded, skipping native hook");
@@ -172,6 +180,8 @@ public class RelayVpnService extends VpnService {
     private synchronized void stopVpn() {
         if (!isRunning.get() && vpnInterface == null) return;
         isRunning.set(false);
+        configuredHostIp = null;
+        configuredHostPort = -1;
         try {
             TProxyService.TProxyStopService();
         } catch (Exception ignored) {}

@@ -41,12 +41,15 @@ public class RelayService extends Service {
     public static final int DNS_RELAY_PORT = 8253;
     public static final String ACTION_START_HOST = "com.globalnetworks.app.START_HOST";
     public static final String ACTION_STOP = "com.globalnetworks.app.STOP";
+    public static final String EXTRA_BIND_ADDRESS = "relay_bind_address";
 
     private static final AtomicBoolean routerRunning = new AtomicBoolean(false);
+    private static final AtomicBoolean listenerReady = new AtomicBoolean(false);
     private static final AtomicLong totalSentBytes = new AtomicLong(0);
     private static final AtomicLong totalReceivedBytes = new AtomicLong(0);
 
     private ServerSocket serverSocket;
+    private volatile String bindAddress = "127.0.0.1";
     // High-speed in-memory DNS cache for UDP/QUIC streams (e.g. TikTok, YouTube HTTP/3 over UDP port 443)
     private static final java.util.concurrent.ConcurrentHashMap<String, CachedDns> udpDnsCache = new java.util.concurrent.ConcurrentHashMap<>();
     private static volatile Network lastUpstreamNetwork = null;
@@ -95,7 +98,7 @@ public class RelayService extends Service {
     private PowerManager.WakeLock wakeLock;
 
     public static boolean isRouterRunning() {
-        return routerRunning.get();
+        return routerRunning.get() && listenerReady.get();
     }
 
     public static long getSentBytes() {
@@ -117,7 +120,11 @@ public class RelayService extends Service {
             return START_NOT_STICKY;
         }
 
-        startForegroundNotification("Global Networks Dual-Path Relay", "High-speed SOCKS5 TCP/UDP ASSOCIATE & DNS router active on port " + RELAY_PORT);
+        String requestedAddress = intent != null ? intent.getStringExtra(EXTRA_BIND_ADDRESS) : null;
+        if (requestedAddress != null && !requestedAddress.trim().isEmpty()) {
+            bindAddress = requestedAddress.trim();
+        }
+        startForegroundNotification("Global Networks Dual-Path Relay", "Relay transport on port " + RELAY_PORT);
         startRouter();
         NetworkWatcher.getInstance(this).start();
         return START_STICKY;
@@ -150,8 +157,14 @@ public class RelayService extends Service {
     }
 
     private synchronized void startRouter() {
-        if (routerRunning.get()) return;
+        if (routerRunning.get()) {
+            if (serverSocket != null && serverSocket.isBound()
+                    && serverSocket.getInetAddress() != null
+                    && serverSocket.getInetAddress().getHostAddress().equals(bindAddress)) return;
+            stopRouter();
+        }
         routerRunning.set(true);
+        listenerReady.set(false);
         try {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (pm != null && (wakeLock == null || !wakeLock.isHeld())) {
@@ -167,7 +180,9 @@ public class RelayService extends Service {
             try {
                 serverSocket = new ServerSocket();
                 serverSocket.setReuseAddress(true);
-                serverSocket.bind(new InetSocketAddress("0.0.0.0", RELAY_PORT));
+                serverSocket.bind(new InetSocketAddress(bindAddress, RELAY_PORT));
+                listenerReady.set(true);
+                Log.i(TAG, "Relay SOCKS/HTTP listener bound to " + bindAddress + ":" + RELAY_PORT);
 
                 while (routerRunning.get() && !serverSocket.isClosed()) {
                     try {
@@ -182,13 +197,14 @@ public class RelayService extends Service {
                     }
                 }
             } catch (Exception e) {
+                listenerReady.set(false);
                 routerRunning.set(false);
-        if (wakeLock != null) {
-            try {
-                if (wakeLock.isHeld()) wakeLock.release();
-            } catch (Exception ignored) {}
-            wakeLock = null;
-        }
+                Log.e(TAG, "Could not bind relay listener to " + bindAddress + ":" + RELAY_PORT, e);
+            } finally {
+                if (!routerRunning.get()) {
+                    if (listenerReady.compareAndSet(true, false)) Log.w(TAG, "Relay listener stopped");
+                    releaseWakeLockIfStopped();
+                }
             }
         });
 
@@ -197,7 +213,7 @@ public class RelayService extends Service {
             try {
                 dnsRelaySocket = new DatagramSocket(null);
                 dnsRelaySocket.setReuseAddress(true);
-                dnsRelaySocket.bind(new InetSocketAddress("0.0.0.0", DNS_RELAY_PORT));
+                dnsRelaySocket.bind(new InetSocketAddress(bindAddress, DNS_RELAY_PORT));
 
                 byte[] recvBuf = new byte[4096];
                 while (routerRunning.get() && !dnsRelaySocket.isClosed()) {
@@ -254,8 +270,14 @@ public class RelayService extends Service {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm == null) return null;
 
-        Network current = null;
-        for (Network net : cm.getAllNetworks()) {
+        Network current = cm.getActiveNetwork();
+        NetworkCapabilities activeCaps = current != null ? cm.getNetworkCapabilities(current) : null;
+        if (activeCaps == null
+                || !activeCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                || !activeCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+            current = null;
+        }
+        if (current == null) for (Network net : cm.getAllNetworks()) {
             NetworkCapabilities caps = cm.getNetworkCapabilities(net);
             if (caps != null &&
                 caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
@@ -368,6 +390,15 @@ public class RelayService extends Service {
         }
     }
 
+    private static void readFully(InputStream in, byte[] bytes) throws Exception {
+        int offset = 0;
+        while (offset < bytes.length) {
+            int read = in.read(bytes, offset, bytes.length - offset);
+            if (read < 0) throw new java.io.EOFException("Unexpected end of SOCKS5 request");
+            offset += read;
+        }
+    }
+
     private static String readLine(InputStream in, ByteArrayOutputStream buf) throws Exception {
         buf.reset();
         int c;
@@ -388,15 +419,16 @@ public class RelayService extends Service {
         }
         int nmethods = in.read();
         byte[] methods = new byte[nmethods];
-        in.read(methods);
+        readFully(in, methods);
 
         // Accept NO_AUTH (0x00)
         out.write(new byte[]{0x05, 0x00});
         out.flush();
 
         byte[] header = new byte[4];
-        int hRead = in.read(header);
-        if (hRead < 4) {
+        try {
+            readFully(in, header);
+        } catch (java.io.EOFException eof) {
             client.close();
             return;
         }
@@ -406,16 +438,17 @@ public class RelayService extends Service {
         String targetHost;
         if (atyp == 0x01) {
             byte[] ipv4 = new byte[4];
-            in.read(ipv4);
+            readFully(in, ipv4);
             targetHost = InetAddress.getByAddress(ipv4).getHostAddress();
         } else if (atyp == 0x03) {
             int domainLen = in.read();
+            if (domainLen < 0) throw new java.io.EOFException("Missing SOCKS5 domain length");
             byte[] domain = new byte[domainLen];
-            in.read(domain);
+            readFully(in, domain);
             targetHost = new String(domain, StandardCharsets.UTF_8);
         } else if (atyp == 0x04) {
             byte[] ipv6 = new byte[16];
-            in.read(ipv6);
+            readFully(in, ipv6);
             targetHost = InetAddress.getByAddress(ipv6).getHostAddress();
         } else {
             client.close();
@@ -423,7 +456,7 @@ public class RelayService extends Service {
         }
 
         byte[] portBytes = new byte[2];
-        in.read(portBytes);
+        readFully(in, portBytes);
         int targetPort = ((portBytes[0] & 0xFF) << 8) | (portBytes[1] & 0xFF);
 
         if (cmd == 0x01) {
@@ -462,7 +495,7 @@ public class RelayService extends Service {
             try {
                 hostUdpSocket.setTrafficClass(0x10); // IPTOS_LOWDELAY / WMM Video priority queue
             } catch (Exception ignored) {}
-            hostUdpSocket.bind(new InetSocketAddress("0.0.0.0", 0));
+            hostUdpSocket.bind(new InetSocketAddress(InetAddress.getByName(bindAddress), 0));
             int boundPort = hostUdpSocket.getLocalPort();
 
             InetAddress localAddr = clientTcp.getLocalAddress();
@@ -690,7 +723,17 @@ public class RelayService extends Service {
         try { s2.close(); } catch (Exception ignored) {}
     }
 
+    private void releaseWakeLockIfStopped() {
+        if (wakeLock != null) {
+            try {
+                if (wakeLock.isHeld()) wakeLock.release();
+            } catch (Exception ignored) {}
+            wakeLock = null;
+        }
+    }
+
     private synchronized void stopRouter() {
+        listenerReady.set(false);
         routerRunning.set(false);
         clearDnsCache();
         if (serverSocket != null) {
@@ -705,6 +748,7 @@ public class RelayService extends Service {
             threadPool.shutdownNow();
             threadPool = null;
         }
+        releaseWakeLockIfStopped();
     }
 
     @Override
