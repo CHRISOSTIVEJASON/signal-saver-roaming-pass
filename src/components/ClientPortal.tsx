@@ -323,14 +323,13 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
     }
   };
 
+
   useEffect(() => {
+    if (!paybillFallbackOpen) return;
     const msisdn = normalizePhone(phone);
     if (!msisdn || msisdn.length < 9) return;
-    const timer = setTimeout(() => {
-      void fetchDynamicAccount(msisdn, pass.id);
-    }, 700);
-    return () => clearTimeout(timer);
-  }, [phone, pass.id]);
+    void fetchDynamicAccount(msisdn, pass.id);
+  }, [paybillFallbackOpen, phone, pass.id]);
 
   const copyManualField = (val: string, label: string) => {
     navigator.clipboard?.writeText(val);
@@ -583,7 +582,6 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
       const msg = String(e instanceof Error ? e.message : e || "");
       const isBlockedOrActive = msg.toLowerCase().includes("blocked") || msg.toLowerCase().includes("already have an active pass");
       if (!isBlockedOrActive) {
-        void fetchDynamicAccount(msisdn, pass.id);
         setPaybillFallbackOpen(true);
       }
       toast.error(msg || "Could not push STK. Redirecting to Paybill...", {
@@ -792,7 +790,6 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
                 toast.error("Enter a valid Safaricom number (07… or 01…) first");
                 return;
               }
-              void fetchDynamicAccount(msisdn, pass.id);
               setPaybillFallbackOpen(true);
             }}
             className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-4 transition-colors cursor-pointer"
