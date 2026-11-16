@@ -185,32 +185,8 @@ export function ClientPortal() {
 }
 
 
-function InternetStatus() {
-  const { state, direct, connectedDirectly } = useWifiState();
-  const [device] = useStored<Device>(KEYS.device, defaultDevice);
-  if (!Capacitor.isNativePlatform()) return null;
-
-  const hasWifi = Boolean(device.currentWifi?.ssid || device.currentWifi?.bssid);
-  const hasRelay = Boolean(direct || device.relay?.connected);
-  if (!hasWifi && !hasRelay) return null;
-
-  const mode = hasRelay ? "Relay" : (connectedDirectly || state === "personal" || state === "direct_pool") ? "Direct Wi-Fi" : "Wi-Fi";
-  const label = typeof device.internetValidated !== "boolean"
-    ? `${mode} connected · Checking internet…`
-    : hasRelay
-      ? `${mode} active · Wi-Fi internet ${device.internetValidated ? "verified" : "not verified"}`
-      : `${mode} connected · ${device.internetValidated ? "Internet access" : "No internet"}`;
-  const verified = device.internetValidated === true;
-  return (
-    <span role="status" aria-live="polite" className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${verified ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-warning/40 bg-warning/10 text-warning"}`}>
-      {verified ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-      {label}
-    </span>
-  );
-}
-
-function NetworkBadge() {
-  const { state, ssid, connectedDirectly, direct } = useWifiState();
+function NetworkBadge({ activePass = false }: { activePass?: boolean }) {
+  const { state, ssid, direct, connectedDirectly } = useWifiState();
   const [device] = useStored<Device>(KEYS.device, defaultDevice);
   const [beepAlerts, setBeepAlerts] = useBeepAlerts();
 
@@ -220,43 +196,47 @@ function NetworkBadge() {
     toast.info(next ? "Nearby Wi-Fi sound alert enabled (3 beeps)" : "Nearby Wi-Fi sound alert muted");
   };
 
-  const badgeContent = (state === "direct_pool" || connectedDirectly || (device.currentWifi && state === "personal")) ? (
-    <span className="inline-flex items-center gap-2 rounded-full border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-medium text-accent">
-      <Signal className="h-3.5 w-3.5" />
-      Connected directly • {ssid || "Wi-Fi"}
-    </span>
-  ) : state === "pool" ? (
-    <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-      <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-      Network Connected • {ssid || "Pool"}
-    </span>
-  ) : device.nearbyPoolDetected ? (
-    <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-      <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-      Sensed Nearby • {device.nearbySsid || "Pool"}
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-muted-foreground">
-      <Search className="h-3.5 w-3.5" />
-      Searching for network…
-    </span>
-  );
+  const hasWifi = Boolean(device.currentWifi?.ssid || device.currentWifi?.bssid);
+  const directMode = state === "direct_pool" || connectedDirectly || state === "personal";
+  let statusText: string;
+  let isOnline = device.internetValidated === true;
 
+  if (state === "searching" && !direct) {
+    statusText = device.nearbyPoolDetected
+      ? `${device.nearbySsid || "Pool Wi-Fi"} found · ${activePass ? "reconnecting quietly…" : "connecting automatically…"}`
+      : activePass
+        ? "Searching for Wi-Fi · retrying quietly…"
+        : "Searching for Wi-Fi…";
+    isOnline = false;
+  } else {
+    const mode = direct ? "Relay" : directMode ? "Direct Wi-Fi" : "Pool Wi-Fi";
+    const internet = typeof device.internetValidated !== "boolean"
+      ? "checking internet…"
+      : device.internetValidated ? "Internet access" : "No internet";
+    const signingIn = !direct && state === "pool" && activePass && device.captive?.ready === false;
+    statusText = signingIn
+      ? `${mode} connected · signing in automatically…`
+      : `${mode} connected · ${internet}${activePass && directMode ? " · pass time saved" : activePass && !isOnline ? " · retrying quietly" : ""}`;
+  }
+
+  const connected = hasWifi || direct || state === "pool";
   return (
     <div className="flex flex-col items-center gap-1.5">
       <div className="inline-flex items-center gap-1.5">
-        {badgeContent}
+        <span role="status" aria-live="polite" className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${isOnline ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-warning/40 bg-warning/10 text-warning"}`}>
+          {connected && isOnline ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+          {statusText}
+        </span>
         <button
-        type="button"
-        onClick={toggleSound}
-        aria-label={beepAlerts ? "Mute alert sound" : "Enable alert sound"}
-        title={beepAlerts ? "Alert sound is ON (tap to mute)" : "Alert sound is MUTED (tap to enable)"}
-        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/60 text-muted-foreground transition hover:text-foreground"
-      >
+          type="button"
+          onClick={toggleSound}
+          aria-label={beepAlerts ? "Mute alert sound" : "Enable alert sound"}
+          title={beepAlerts ? "Alert sound is ON (tap to mute)" : "Alert sound is MUTED (tap to enable)"}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/60 text-muted-foreground transition hover:text-foreground"
+        >
           {beepAlerts ? <Volume2 className="h-3.5 w-3.5 text-primary" /> : <VolumeX className="h-3.5 w-3.5 text-muted-foreground/60" />}
         </button>
       </div>
-      <InternetStatus />
     </div>
   );
 }
@@ -739,7 +719,7 @@ function Purchase({ onActivated, existingSession }: { onActivated: (s: Session) 
   return (
     <div className="space-y-4">
       <div className="flex flex-col items-center justify-center gap-2">
-        <NetworkBadge />
+        <NetworkBadge activePass={Boolean(existingSession && existingSession.remainingMs > 0)} />
         {existingSession && existingSession.remainingMs > 0 && (
           <div className="w-full flex items-center justify-between gap-2.5 rounded-xl border border-primary/40 bg-primary/10 p-3 text-xs text-primary shadow-sm">
             <div className="space-y-0.5 text-left">
@@ -1444,7 +1424,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
   return (
     <div className="space-y-5 text-center">
       <CaptiveLogin sessionId={session.id} />
-      <InternetStatus />
+      <NetworkBadge activePass />
       {isFrozen && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-destructive/40 bg-destructive/15 px-3 py-1.5 text-xs font-medium text-destructive"><Snowflake className="h-3.5 w-3.5 shrink-0" />Pass Frozen by Admin — Internet access is paused and time is preserved</span>}
       {suspended && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5 shrink-0" />Service paused — your time is frozen{service.resumeDate ? ` until ${service.resumeDate}` : ""}</span>}
       {connecting && <span className="inline-flex items-center gap-2 text-sm text-warning"><Loader2 className="h-4 w-4 animate-spin" />Connecting — your time is preserved</span>}
