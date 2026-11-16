@@ -486,9 +486,14 @@ public class NetworkWatcher {
         try {
             Network active = connectivityManager.getActiveNetwork();
             NetworkCapabilities caps = active != null ? connectivityManager.getNetworkCapabilities(active) : null;
-            return caps != null
+            boolean isValidatedWifi = caps != null
                     && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
                     && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            boolean isValidatedRelayVpn = caps != null
+                    && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                    && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                    && RelayVpnService.isVpnRunning();
+            return isValidatedWifi || isValidatedRelayVpn;
         } catch (Throwable ignored) {
             return false;
         }

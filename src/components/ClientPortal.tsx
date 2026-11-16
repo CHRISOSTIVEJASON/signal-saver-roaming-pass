@@ -197,7 +197,9 @@ function InternetStatus() {
   const mode = hasRelay ? "Relay" : (connectedDirectly || state === "personal" || state === "direct_pool") ? "Direct Wi-Fi" : "Wi-Fi";
   const label = typeof device.internetValidated !== "boolean"
     ? `${mode} connected · Checking internet…`
-    : `${mode} connected · ${device.internetValidated ? "Internet access" : "No internet"}`;
+    : hasRelay
+      ? `${mode} active · Wi-Fi internet ${device.internetValidated ? "verified" : "not verified"}`
+      : `${mode} connected · ${device.internetValidated ? "Internet access" : "No internet"}`;
   const verified = device.internetValidated === true;
   return (
     <span role="status" aria-live="polite" className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${verified ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-warning/40 bg-warning/10 text-warning"}`}>
@@ -1406,7 +1408,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
       mounted = false;
       clearInterval(interval);
     };
-  }, [session.id, deviceState.currentWifi?.bssid, direct]);
+  }, [session.id, deviceState.currentWifi?.bssid, deviceState.internetValidated, direct]);
 
   useEffect(() => {
     const step = () => {
@@ -1432,7 +1434,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
     step();
     const t = setInterval(step, 1000);
     return () => clearInterval(t);
-  }, [session.id, state, connecting, suspended, isFrozen]);
+  }, [session.id, state, connecting, suspended, isFrozen, deviceState.internetValidated, session.online]);
 
   const [offers] = useOffers();
   const remainingMs = tick(session.remainingMs, session.lastTick, Math.min(Date.now(), session.lastTick + 30_000), session.online);

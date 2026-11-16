@@ -295,9 +295,14 @@ public class GlobalRelayPlugin extends Plugin {
             try {
                 Network activeNetwork = activeCm.getActiveNetwork();
                 NetworkCapabilities activeCaps = activeNetwork != null ? activeCm.getNetworkCapabilities(activeNetwork) : null;
-                internetValidated = activeCaps != null
+                boolean isValidatedWifi = activeCaps != null
                         && activeCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
                         && activeCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+                boolean isValidatedRelayVpn = activeCaps != null
+                        && activeCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                        && activeCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                        && RelayVpnService.isVpnRunning();
+                internetValidated = isValidatedWifi || isValidatedRelayVpn;
             } catch (Exception ignored) {}
         }
         result.put("internetValidated", internetValidated);
