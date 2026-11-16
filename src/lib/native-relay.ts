@@ -10,6 +10,8 @@ export interface NativeState {
   nearbySsid?: string;
   authFailedSsid?: string;
   connectedDirectly?: boolean;
+  /** Android reports true only when the active default network is system-validated for internet access. */
+  internetValidated?: boolean;
 }
 
 export interface UpdateProgressData {

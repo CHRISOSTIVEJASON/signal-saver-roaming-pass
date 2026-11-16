@@ -30,6 +30,7 @@ export type Device = {
   nearbyPoolDetected?: boolean;
   nearbySsid?: string;
   connectedDirectly?: boolean;
+  internetValidated?: boolean;
 };
 export const defaultDevice: Device = {
   appMode: false, onboarded: false,

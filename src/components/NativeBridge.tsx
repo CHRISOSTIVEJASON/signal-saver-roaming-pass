@@ -57,6 +57,7 @@ export function NativeBridge() {
           nearbyPoolDetected: Boolean(state.nearbyPoolDetected),
           nearbySsid: state.nearbySsid ?? undefined,
           connectedDirectly: Boolean(state.connectedDirectly),
+          internetValidated: state.internetValidated,
         });
 
         if (state.authFailedSsid) {

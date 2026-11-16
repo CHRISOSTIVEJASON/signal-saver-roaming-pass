@@ -701,11 +701,12 @@ export const unpairCompanionPass = createServerFn({ method: 'POST' })
   });
 
 export const heartbeatSession = createServerFn({ method: 'POST' })
-  .validator((input: { id: string; bssid: string | null; ssid?: string | null; relayReady?: boolean; deviceId?: string; directWifi?: boolean }) => z.object({
+  .validator((input: { id: string; bssid: string | null; ssid?: string | null; relayReady?: boolean; internetVerified?: boolean; deviceId?: string; directWifi?: boolean }) => z.object({
     id: z.string(),
     bssid: z.string().nullable(),
     ssid: z.string().nullable().optional(),
     relayReady: z.boolean().default(false),
+    internetVerified: z.boolean().default(false),
     deviceId: z.string().optional(),
     directWifi: z.boolean().optional()
   }).parse(input))
@@ -741,7 +742,8 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
     const matchesPoolBssid = Boolean(data.bssid && pool?.some((n) => n.bssid && n.bssid.toUpperCase() === data.bssid?.toUpperCase()));
     const matchesPoolSsid = Boolean(data.ssid && pool?.some((n) => n.ssid && n.ssid.trim().toLowerCase() === data.ssid?.trim().toLowerCase()));
     const matchesPool = matchesPoolBssid || matchesPoolSsid;
-    const hardwareOnline = !isDirectWifi && (matchesPool || Boolean(data.relayReady));
+    // SSID association or a formed relay is not proof of usable internet.
+    const hardwareOnline = !isDirectWifi && Boolean(data.internetVerified) && (matchesPool || Boolean(data.relayReady));
     const { data: svc } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_service_status__').maybeSingle();
     let serviceActive = true;
     try { serviceActive = svc?.api_token ? JSON.parse(svc.api_token).active !== false : true; } catch {}
@@ -758,7 +760,7 @@ export const heartbeatSession = createServerFn({ method: 'POST' })
       // Companion device: if companion has pool Wi-Fi or relay, online.
       // If companion reports null bssid (e.g. laptop / browser client), keep online if host was recently online (< 60s)
       const hostRecentlyOnline = (now - (sessionPayload.primary_last_online || session.lastTick || 0)) < 60_000;
-      sessionOnline = hardwareOnline || (session.online && hostRecentlyOnline);
+      sessionOnline = hardwareOnline || (Boolean(data.internetVerified) && session.online && hostRecentlyOnline);
     } else {
       sessionOnline = hardwareOnline;
       if (hardwareOnline) {

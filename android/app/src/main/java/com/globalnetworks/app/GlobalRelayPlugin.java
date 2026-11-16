@@ -73,6 +73,7 @@ public class GlobalRelayPlugin extends Plugin {
     private PublishDiscoverySession publication;
     private BroadcastReceiver receiver;
     private ConnectivityManager.NetworkCallback autoRelayCallback;
+    private ConnectivityManager.NetworkCallback defaultNetworkCallback;
     private boolean started = false;
     private boolean upstream = false;
     private JSObject relay;
@@ -86,6 +87,7 @@ public class GlobalRelayPlugin extends Plugin {
         if (manager != null) {
             channel = manager.initialize(getContext(), Looper.getMainLooper(), null);
         }
+        registerDefaultNetworkCallback();
         receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent i) {
@@ -99,6 +101,23 @@ public class GlobalRelayPlugin extends Plugin {
             getContext().registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             getContext().registerReceiver(receiver, filter);
+        }
+    }
+
+
+    private void registerDefaultNetworkCallback() {
+        if (Build.VERSION.SDK_INT < 24) return;
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return;
+            defaultNetworkCallback = new ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(Network network) { emit(); }
+                @Override public void onLost(Network network) { emit(); }
+                @Override public void onCapabilitiesChanged(Network network, NetworkCapabilities capabilities) { emit(); }
+            };
+            cm.registerDefaultNetworkCallback(defaultNetworkCallback);
+        } catch (Exception e) {
+            Log.w("GlobalRelayPlugin", "Could not monitor validated internet state", e);
         }
     }
 
@@ -270,6 +289,18 @@ public class GlobalRelayPlugin extends Plugin {
 
         String ssid = null;
         String bssid = null;
+        boolean internetValidated = false;
+        ConnectivityManager activeCm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (activeCm != null && Build.VERSION.SDK_INT >= 23) {
+            try {
+                Network activeNetwork = activeCm.getActiveNetwork();
+                NetworkCapabilities activeCaps = activeNetwork != null ? activeCm.getNetworkCapabilities(activeNetwork) : null;
+                internetValidated = activeCaps != null
+                        && activeCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                        && activeCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+            } catch (Exception ignored) {}
+        }
+        result.put("internetValidated", internetValidated);
 
         if (hasAccess) {
             ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
@@ -488,6 +519,10 @@ public class GlobalRelayPlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         super.handleOnDestroy();
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null && defaultNetworkCallback != null) cm.unregisterNetworkCallback(defaultNetworkCallback);
+        } catch (Exception ignored) {}
         if (activeInstance == this) {
             activeInstance = null;
         }

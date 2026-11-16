@@ -447,6 +447,12 @@ public class NetworkWatcher {
                 nearbyPoolDetected = false;
             }
 
+            // When an active pass is on a registered hotspot but Android reports no validated
+            // internet, retry the companion relay path quietly. The pass countdown stays frozen.
+            if (hasActivePass() && isConnectedToPool(connSsid, connBssid, poolSsids, poolBssids) && !hasValidatedInternet()) {
+                triggerCompanionRelayFallback("Pool Wi-Fi has no validated internet");
+            }
+
             if (hasActivePass() && lastSuggestedSsid != null) {
                 if (System.currentTimeMillis() - lastSuggestionTime >= 15000) {
                     boolean connectedToPool = false;
@@ -466,6 +472,25 @@ public class NetworkWatcher {
             }
         } catch (Throwable t) {
             Log.e(TAG, "Error sniffing networks", t);
+        }
+    }
+
+
+    private boolean isConnectedToPool(String ssid, String bssid, Set<String> poolSsids, Set<String> poolBssids) {
+        return (ssid != null && poolSsids.contains(ssid.trim().toLowerCase(Locale.US)))
+                || (bssid != null && poolBssids.contains(bssid.trim().toUpperCase(Locale.US)));
+    }
+
+    private boolean hasValidatedInternet() {
+        if (connectivityManager == null || Build.VERSION.SDK_INT < 23) return false;
+        try {
+            Network active = connectivityManager.getActiveNetwork();
+            NetworkCapabilities caps = active != null ? connectivityManager.getNetworkCapabilities(active) : null;
+            return caps != null
+                    && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 
@@ -705,7 +730,7 @@ public class NetworkWatcher {
             Log.w(TAG, "Error triggering companion fallback: " + t.getMessage());
         }
 
-        postFallbackNotification(reason);
+        // Deliberately no notification: retries run quietly while an active countdown is preserved.
     }
 
     private void postFallbackNotification(String reason) {

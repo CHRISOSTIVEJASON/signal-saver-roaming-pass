@@ -185,8 +185,30 @@ export function ClientPortal() {
 }
 
 
+function InternetStatus() {
+  const { state, direct, connectedDirectly } = useWifiState();
+  const [device] = useStored<Device>(KEYS.device, defaultDevice);
+  if (!Capacitor.isNativePlatform()) return null;
+
+  const hasWifi = Boolean(device.currentWifi?.ssid || device.currentWifi?.bssid);
+  const hasRelay = Boolean(direct || device.relay?.connected);
+  if (!hasWifi && !hasRelay) return null;
+
+  const mode = hasRelay ? "Relay" : (connectedDirectly || state === "personal" || state === "direct_pool") ? "Direct Wi-Fi" : "Wi-Fi";
+  const label = typeof device.internetValidated !== "boolean"
+    ? `${mode} connected · Checking internet…`
+    : `${mode} connected · ${device.internetValidated ? "Internet access" : "No internet"}`;
+  const verified = device.internetValidated === true;
+  return (
+    <span role="status" aria-live="polite" className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${verified ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-warning/40 bg-warning/10 text-warning"}`}>
+      {verified ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+      {label}
+    </span>
+  );
+}
+
 function NetworkBadge() {
-  const { state, ssid, connectedDirectly } = useWifiState();
+  const { state, ssid, connectedDirectly, direct } = useWifiState();
   const [device] = useStored<Device>(KEYS.device, defaultDevice);
   const [beepAlerts, setBeepAlerts] = useBeepAlerts();
 
@@ -219,17 +241,20 @@ function NetworkBadge() {
   );
 
   return (
-    <div className="inline-flex items-center gap-1.5">
-      {badgeContent}
-      <button
+    <div className="flex flex-col items-center gap-1.5">
+      <div className="inline-flex items-center gap-1.5">
+        {badgeContent}
+        <button
         type="button"
         onClick={toggleSound}
         aria-label={beepAlerts ? "Mute alert sound" : "Enable alert sound"}
         title={beepAlerts ? "Alert sound is ON (tap to mute)" : "Alert sound is MUTED (tap to enable)"}
         className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/60 text-muted-foreground transition hover:text-foreground"
       >
-        {beepAlerts ? <Volume2 className="h-3.5 w-3.5 text-primary" /> : <VolumeX className="h-3.5 w-3.5 text-muted-foreground/60" />}
-      </button>
+          {beepAlerts ? <Volume2 className="h-3.5 w-3.5 text-primary" /> : <VolumeX className="h-3.5 w-3.5 text-muted-foreground/60" />}
+        </button>
+      </div>
+      <InternetStatus />
     </div>
   );
 }
@@ -1331,6 +1356,9 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
             bssid: deviceState.currentWifi?.bssid ?? null,
             ssid: deviceState.currentWifi?.ssid ?? null,
             relayReady: direct,
+            internetVerified: Capacitor.isNativePlatform()
+              ? deviceState.internetValidated === true
+              : (typeof navigator !== "undefined" && navigator.onLine),
             deviceId: getDeviceId(),
             directWifi: isDirect
           }
@@ -1386,9 +1414,12 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
       const currentFrozen = Boolean(ref.current.frozen || session.frozen);
       const isDirect = state === "direct_pool" || Boolean(deviceState.connectedDirectly);
       const isCompanion = Boolean(session.pairedCompanionId && session.pairedCompanionId === getDeviceId());
+      const internetVerified = Capacitor.isNativePlatform()
+        ? deviceState.internetValidated === true
+        : (typeof navigator !== "undefined" && navigator.onLine);
       const running = isCompanion
-        ? (Boolean(session.online) && !suspended && !currentFrozen)
-        : (state === "pool" && !isDirect && !connecting && !suspended && !currentFrozen);
+        ? (Boolean(session.online) && internetVerified && !suspended && !currentFrozen)
+        : (state === "pool" && !isDirect && !connecting && internetVerified && !suspended && !currentFrozen);
       // Cap each step so time spent closed, suspended or offline is never charged.
       update((s) => ({
         remainingMs: tick(s.remainingMs, s.lastTick, Math.min(now, s.lastTick + 5_000), running),
@@ -1411,6 +1442,7 @@ function ActiveSession({ session, setSessions, onEnd }: { session: Session; setS
   return (
     <div className="space-y-5 text-center">
       <CaptiveLogin sessionId={session.id} />
+      <InternetStatus />
       {isFrozen && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-destructive/40 bg-destructive/15 px-3 py-1.5 text-xs font-medium text-destructive"><Snowflake className="h-3.5 w-3.5 shrink-0" />Pass Frozen by Admin — Internet access is paused and time is preserved</span>}
       {suspended && <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-warning/40 bg-warning/15 px-3 py-1.5 text-xs font-medium text-warning"><Snowflake className="h-3.5 w-3.5 shrink-0" />Service paused — your time is frozen{service.resumeDate ? ` until ${service.resumeDate}` : ""}</span>}
       {connecting && <span className="inline-flex items-center gap-2 text-sm text-warning"><Loader2 className="h-4 w-4 animate-spin" />Connecting — your time is preserved</span>}
