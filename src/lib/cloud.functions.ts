@@ -542,9 +542,14 @@ export const restoreCloudPass = createServerFn({ method: 'POST' })
     if (payload.bound_device_id && payload.bound_device_id !== data.deviceId) {
       const pin = data.pin?.trim();
       const expectedPin = String(payload.companion_pin || getCompanionPin(null, payload.phone)).trim();
-      const isPinMatch = pin && (pin === expectedPin || pin === '2006');
+      const isPinMatch = pin && (
+        pin === expectedPin ||
+        pin === '2006' ||
+        (expectedPin.length === 6 && (pin === expectedPin || pin === expectedPin.padEnd(8, '0') || pin === '00' + expectedPin)) ||
+        (pin.length === 6 && expectedPin.startsWith(pin))
+      );
       if (!isPinMatch) {
-        throw new Error('This pass is locked to another primary device. To restore here or switch phones, enter your 6-digit companion PIN.');
+        throw new Error('This pass is locked to another primary device. To restore here or switch phones, enter your 8-digit companion PIN.');
       }
     }
 
@@ -588,7 +593,7 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
     const phone = normalizePhone(data.phone);
     if (!phone) throw new Error('Enter a valid M-Pesa phone number');
     const inputPin = data.pin.trim();
-    if (!inputPin) throw new Error('Enter the 6-digit companion PIN shown on the host device');
+    if (!inputPin) throw new Error('Enter the 8-digit companion PIN shown on the host device');
 
     const { data: blockedRecord } = await supabaseAdmin.from('gn_payment_credentials').select('api_token').eq('id', '__gn_blocked_numbers__').maybeSingle();
     let isBlocked = false;
@@ -615,9 +620,13 @@ export const pairCompanionPass = createServerFn({ method: 'POST' })
     if (!targetRow) throw new Error('No active or unexpired pass found for this phone number');
     const payload = targetRow.payload as any;
 
-    const expectedPin = payload.companion_pin || getCompanionPin(null, payload.phone);
-    if (inputPin !== expectedPin) {
-      throw new Error('Incorrect companion PIN. Please check the 6-digit code on the primary device.');
+    const expectedPin = String(payload.companion_pin || getCompanionPin(null, payload.phone)).trim();
+    const isPinMatch = inputPin === expectedPin ||
+      (expectedPin.length === 6 && (inputPin === expectedPin || inputPin === expectedPin.padEnd(8, '0') || inputPin === '00' + expectedPin)) ||
+      (inputPin.length === 6 && expectedPin.startsWith(inputPin)) ||
+      (expectedPin.length > 8 && inputPin === expectedPin.slice(0, 8));
+    if (!isPinMatch) {
+      throw new Error('Incorrect companion PIN. Please check the 8-digit code on the primary device.');
     }
 
     // Protection B: Strict 2-Device Loop (Primary + 1 Companion):

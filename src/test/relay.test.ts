@@ -14,9 +14,9 @@ describe("Direct relay eligibility", () => {
     expect(relayProvidesConnection({ ...link, connected: false }, 2000)).toBe(false);
   });
   it("extracts companion pin correctly from passphrase or phone", () => {
-    expect(getCompanionPin("123456")).toBe("123456");
-    expect(getCompanionPin(null, "0712345678")).toBe("345678");
-    expect(getCompanionPin("", "")).toBe("842109");
+    expect(getCompanionPin("123456")).toBe("12345600");
+    expect(getCompanionPin(null, "0712345678")).toBe("12345678");
+    expect(getCompanionPin("", "")).toBe("84210927");
   });
 });
 

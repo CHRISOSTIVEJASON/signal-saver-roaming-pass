@@ -1130,7 +1130,13 @@ function CompanionSharing({ session, onUpdateSession }: { session: Session; onUp
   const isNative = Capacitor.isNativePlatform();
 
   const networkName = deviceState.relay?.networkName || ("GN-SHARE-" + (session.phone.replace(/\D/g, "").slice(-4) || "PASS"));
-  const pin = session.companionPin || getCompanionPin(null, session.phone);
+  const nativePassphrase = deviceState.relay?.passphrase?.trim();
+  const sessionPin = session.companionPin
+    ? (session.companionPin.length >= 8 ? session.companionPin : session.companionPin.padEnd(8, "0"))
+    : null;
+  const pin = (nativePassphrase && nativePassphrase.length >= 8)
+    ? nativePassphrase
+    : (sessionPin || getCompanionPin(null, session.phone));
   const peerCount = deviceState.relay?.peerCount ?? 0;
   
   const normPhone = normalizePhone(session.phone);
@@ -1207,7 +1213,7 @@ function CompanionSharing({ session, onUpdateSession }: { session: Session; onUp
             </div>
             <div className="rounded-lg bg-secondary/50 p-2.5 border border-border/40 flex items-center justify-between">
               <div>
-                <span className="text-[10px] text-muted-foreground uppercase font-mono tracking-wider block">6-Digit PIN</span>
+                <span className="text-[10px] text-muted-foreground uppercase font-mono tracking-wider block">8-Digit PIN / Wi-Fi Key</span>
                 <span className="font-mono text-base font-bold text-primary block mt-0.5 tracking-widest">{pin}</span>
               </div>
               <Button size="icon" variant="ghost" onClick={copyPin} className="h-7 w-7 text-muted-foreground hover:text-foreground">
@@ -1265,9 +1271,12 @@ function CompanionSharing({ session, onUpdateSession }: { session: Session; onUp
             </div>
             <ol className="list-decimal list-inside space-y-1 pl-1">
               <li>Open Wi-Fi on your laptop/phone and connect to <span className="font-mono text-foreground font-semibold">{networkName}</span>.</li>
-              <li>Enter the 6-digit PIN <span className="font-mono text-foreground font-semibold">{pin}</span>.</li>
+              <li>Enter the 8-digit security key / PIN: <span className="font-mono text-foreground font-semibold">{pin}</span>.</li>
               <li>Or tap <strong>Open Hotspot Settings</strong> below to share your phone's personal hotspot directly.</li>
             </ol>
+            <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/20">
+              Note: Wi-Fi security keys require at least 8 characters. If using Personal Hotspot, set your hotspot password in Settings to this 8-digit PIN (<span className="font-mono text-foreground font-semibold">{pin}</span>).
+            </p>
           </div>
 
           <div className="flex items-center justify-between pt-1">

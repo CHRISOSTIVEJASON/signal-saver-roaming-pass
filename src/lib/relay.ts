@@ -14,20 +14,24 @@ export function relayProvidesConnection(link: MeshLink | null | undefined, now: 
 }
 
 export function getCompanionPin(passphrase?: string | null, phone?: string): string {
-  if (passphrase && passphrase.trim().length >= 4) return passphrase.trim();
+  if (passphrase && passphrase.trim().length >= 4) {
+    const p = passphrase.trim();
+    return p.length >= 8 ? p : p.padEnd(8, "0");
+  }
   const digits = (phone || "").replace(/\D/g, "");
-  if (digits.length >= 6) return digits.slice(-6);
-  return "842109";
+  if (digits.length >= 8) return digits.slice(-8);
+  if (digits.length >= 6) return digits.slice(-6).padEnd(8, "0");
+  return "84210927";
 }
 
 export function generateCompanionPin(): string {
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     const arr = new Uint32Array(1);
     crypto.getRandomValues(arr);
-    const val = arr[0] ?? Math.floor(Math.random() * 900000);
-    return (100000 + (val % 900000)).toString();
+    const val = arr[0] ?? Math.floor(Math.random() * 90000000);
+    return (10000000 + (val % 90000000)).toString();
   }
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return Math.floor(10000000 + Math.random() * 90000000).toString();
 }
 
 /**
