@@ -14,10 +14,10 @@ export const useConfig = () => {
 };
 
 const PERMS: { key: keyof Device["perms"]; title: string; why: string; icon: ReactNode }[] = [
-  { key: "wifi", title: "Location & Nearby Wi-Fi Devices", why: "Mandatory location and nearby devices permission to scan, detect, and automatically connect to stamped pool Wi-Fi signals.", icon: <Wifi className="h-5 w-5" /> },
-  { key: "background", title: "Unrestricted Battery & Background Running", why: "Prevents Android from putting the network watcher to sleep when the screen is locked.", icon: <BatteryCharging className="h-5 w-5" /> },
-  { key: "autostart", title: "Auto-Start & Boot Persistence", why: "Ensures the network watcher and background roaming service automatically resume when your phone reboots.", icon: <RefreshCw className="h-5 w-5" /> },
-  { key: "relay", title: "Status Notification & Foreground Service", why: "Required for the persistent foreground service to keep network sharing and alerts active.", icon: <Share2 className="h-5 w-5" /> },
+  { key: "wifi", title: "Nearby Wi-Fi & Location", why: "Scan and connect to pool Wi-Fi", icon: <Wifi className="h-4 w-4" /> },
+  { key: "background", title: "Unrestricted Battery", why: "Continuous background roaming", icon: <BatteryCharging className="h-4 w-4" /> },
+  { key: "autostart", title: "Auto-Start on Boot", why: "Resume automatically on reboot", icon: <RefreshCw className="h-4 w-4" /> },
+  { key: "relay", title: "Foreground & Notification", why: "Active connection and alerts", icon: <Share2 className="h-4 w-4" /> },
 ];
 
 function openApk(url: string) {
@@ -251,13 +251,14 @@ export function Onboarding() {
           setDevice((prev) => ({ ...prev, perms: { ...prev.perms, background: "granted" } }));
           toast.success("Battery optimization set to Unrestricted!");
         } else if (key === "autostart") {
+          toast.info("In settings: enable 'Auto-start' or allow 'Background activity' for Global Networks", { duration: 6000 });
           if (typeof GlobalRelay.openAutostartSettings === "function") {
             await GlobalRelay.openAutostartSettings();
           } else {
             await GlobalRelay.openSettings();
           }
           setDevice((prev) => ({ ...prev, perms: { ...prev.perms, autostart: "granted" } }));
-          toast.success("Auto-start permission accepted!");
+          toast.success("Auto-start permission saved!");
         }
       } else {
         setDevice((prev) => ({ ...prev, perms: { ...prev.perms, [key]: "granted" } }));
@@ -277,6 +278,7 @@ export function Onboarding() {
         await GlobalRelay.requestAccess();
         await GlobalRelay.requestBatteryExemption();
         if (typeof GlobalRelay.openAutostartSettings === "function") {
+          toast.info("In settings: enable 'Auto-start' or allow background activity", { duration: 5000 });
           try { await GlobalRelay.openAutostartSettings(); } catch (_) {}
         }
       }
@@ -284,7 +286,7 @@ export function Onboarding() {
         ...prev,
         perms: { wifi: "granted", background: "granted", autostart: "granted", relay: "granted" },
       }));
-      toast.success("All mandatory permissions accepted!");
+      toast.success("All permissions accepted!");
     } catch (_) {
       setDevice((prev) => ({
         ...prev,
@@ -305,15 +307,15 @@ export function Onboarding() {
   };
 
   return (
-    <div className="space-y-5 text-left">
-      <div className="text-center space-y-1">
-        <h2 className="text-xl font-bold">Mandatory Setup & Permissions</h2>
-        <p className="text-xs text-muted-foreground">
-          To automatically sense pool Wi-Fi, run in the background, and keep roaming active, all permissions below must be accepted.
+    <div className="space-y-3.5 text-left">
+      <div className="text-center space-y-0.5">
+        <h2 className="text-lg font-bold">Permissions Setup</h2>
+        <p className="text-[11px] text-muted-foreground">
+          Grant required permissions to enable auto-roaming & relay.
         </p>
       </div>
 
-      <div className="space-y-2.5">
+      <div className="space-y-1.5">
         {PERMS.map((p) => {
           const isGranted = device.perms[p.key] === "granted";
           const isLoading = loadingKey === p.key;
@@ -321,22 +323,21 @@ export function Onboarding() {
           return (
             <div
               key={p.key}
-              className={`flex items-start justify-between gap-3 rounded-xl border p-3.5 transition-colors ${
+              className={`flex items-center justify-between gap-2.5 rounded-xl border px-3 py-2 transition-colors ${
                 isGranted ? "border-primary/40 bg-primary/5" : "border-border bg-secondary/20"
               }`}
             >
-              <div className="flex items-start gap-3">
-                <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                   isGranted ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
                 }`}>
                   {p.icon}
                 </div>
-                <div className="space-y-0.5 text-left">
-                  <div className="text-xs font-semibold flex items-center gap-1.5">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold truncate">
                     {p.title}
-                    {isGranted && <span className="text-[10px] font-bold text-primary">✓ Accepted</span>}
                   </div>
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">{p.why}</p>
+                  <p className="text-[10.5px] text-muted-foreground truncate">{p.why}</p>
                 </div>
               </div>
 
@@ -345,37 +346,36 @@ export function Onboarding() {
                 variant={isGranted ? "outline" : "default"}
                 onClick={() => grant(p.key)}
                 disabled={isLoading || isGranted}
-                className={`h-8 shrink-0 rounded-lg px-2.5 text-xs font-semibold ${
+                className={`h-7 shrink-0 rounded-lg px-2.5 text-[11px] font-semibold ${
                   isGranted
-                    ? "border-primary/40 text-primary bg-transparent"
+                    ? "border-primary/30 text-primary bg-transparent"
                     : "bg-primary text-primary-foreground hover:brightness-110"
                 }`}
               >
-                {isLoading ? "Setting…" : isGranted ? "Granted" : "Grant"}
+                {isLoading ? "…" : isGranted ? "✓ Done" : "Grant"}
               </Button>
             </div>
           );
         })}
       </div>
 
-      <div className="space-y-2 pt-2">
-        {!allApproved && (
+      <div className="pt-1">
+        {!allApproved ? (
           <Button
             onClick={grantAll}
             disabled={loadingKey === "all"}
-            className="h-11 w-full rounded-xl bg-secondary text-xs font-semibold hover:bg-secondary/80"
+            className="h-10 w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground hover:brightness-110"
           >
-            {loadingKey === "all" ? "Accepting Permissions…" : "Accept All Permissions"}
+            {loadingKey === "all" ? "Granting…" : "Grant All Permissions"}
+          </Button>
+        ) : (
+          <Button
+            onClick={handleFinish}
+            className="h-10 w-full rounded-xl bg-primary text-xs font-bold text-primary-foreground shadow-[0_0_20px_-5px_var(--primary)] hover:brightness-110"
+          >
+            Continue to Global Networks →
           </Button>
         )}
-
-        <Button
-          onClick={handleFinish}
-          disabled={!allApproved}
-          className="h-12 w-full rounded-xl bg-primary text-sm font-bold text-primary-foreground shadow-[0_0_24px_-6px_var(--primary)] hover:brightness-110 disabled:opacity-50"
-        >
-          {allApproved ? "Continue to Global Networks →" : "Accept All Permissions to Continue"}
-        </Button>
       </div>
     </div>
   );

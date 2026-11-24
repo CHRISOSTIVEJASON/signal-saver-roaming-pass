@@ -289,6 +289,8 @@ public class GlobalRelayPlugin extends Plugin {
                 intent.setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"));
             } else if (buildManufacturer.contains("transsion") || buildManufacturer.contains("tecno") || buildManufacturer.contains("infinix")) {
                 intent.setComponent(new ComponentName("com.transsion.phonemanager", "com.transsion.phonemanager.settings.AutoStartManageActivity"));
+            } else if (buildManufacturer.contains("samsung")) {
+                intent.setComponent(new ComponentName("com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity"));
             }
             if (intent.getComponent() != null) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -296,6 +298,15 @@ public class GlobalRelayPlugin extends Plugin {
                 started = true;
             }
         } catch (Exception ignored) {}
+
+        if (!started) {
+            try {
+                Intent optIntent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                optIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(optIntent);
+                started = true;
+            } catch (Exception ignored) {}
+        }
 
         if (!started) {
             try {

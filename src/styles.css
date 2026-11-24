@@ -130,36 +130,19 @@ body {
   font-family: var(--font-sans);
   background-image: radial-gradient(circle at 20% 0%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 45%),
     radial-gradient(circle at 90% 100%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 45%);
-  background-attachment: fixed;
+  /* hardware-friendly background */
 }
 
 @utility shimmer-border {
   position: relative;
-  isolation: isolate;
-  &::before {
-    content: "";
-    position: absolute;
-    inset: -1px;
-    border-radius: inherit;
-    padding: 1px;
-    background: linear-gradient(110deg, var(--primary), var(--accent), transparent 40%, transparent 60%, var(--accent), var(--primary));
-    background-size: 250% 100%;
-    animation: gn-shimmer 5s linear infinite;
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    z-index: -1;
-  }
+  border: 1px solid color-mix(in oklab, var(--primary) 28%, var(--border));
 }
 
 @utility glow-text {
-  background: linear-gradient(90deg, var(--primary), var(--accent), var(--primary));
-  background-size: 200% auto;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: gn-shimmer 4s linear infinite;
-  filter: drop-shadow(0 0 14px color-mix(in oklab, var(--accent) 45%, transparent));
 }
 
 @keyframes gn-shimmer {

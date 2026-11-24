@@ -110,7 +110,7 @@ function Index() {
 
   return (
     <main className="flex min-h-screen items-start justify-center px-4 py-4 sm:items-center sm:py-12">
-      <div className={`shimmer-border relative w-full rounded-3xl bg-card/95 p-4 shadow-[var(--shadow-ambient)] backdrop-blur sm:p-8 ${admin ? "max-w-5xl" : "max-w-md"}`}>
+      <div className={`shimmer-border relative w-full rounded-3xl bg-card p-4 sm:p-8 shadow-xl ${admin ? "max-w-5xl" : "max-w-md"}`}>
         {!isOnline && (
           <div className="mb-3 flex items-center justify-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-400">
             <WifiOff className="h-3.5 w-3.5 animate-pulse" />

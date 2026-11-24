@@ -56,6 +56,7 @@ export function NativeBridge() {
             background: state.granted ? 'granted' : 'denied',
             wifi: state.granted ? 'granted' : 'denied',
             relay: state.granted ? 'granted' : 'denied',
+            autostart: previous.perms?.autostart === 'granted' ? 'granted' : (previous.perms?.autostart ?? 'unset'),
           },
           currentWifi: state.ssid && state.bssid ? { ssid: state.ssid, bssid: state.bssid } : null,
           relay: state.relay ?? null,
